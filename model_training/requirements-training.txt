@@ -1,0 +1,8 @@
+torch==2.5.1
+torch_geometric==2.6.1
+xgboost==2.1.2
+shap==0.46.0
+faker==30.8.2
+pandas==2.2.3
+numpy==1.26.4
+scikit-learn==1.5.2

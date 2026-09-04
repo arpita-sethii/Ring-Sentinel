@@ -1,0 +1,1661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ring Sentinel — Coordinated Abuse Intelligence</title>
+<script src="/static/vis-network.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap');
+
+  :root{
+    --void:#070A12;
+    --panel:#0D1220;
+    --panel-raised:#141B2B;
+    --panel-hover:#1C2638;
+    --hairline:#263149;
+    --hairline-bright:#394761;
+    --text-hi:#F3F6FC;
+    --text-mid:#9AA7BE;
+    --text-low:#66738B;
+    --risk:#FF5C67;
+    --risk-dim:#7E2933;
+    --risk-glow:rgba(255,92,103,.18);
+    --medium:#FFB84D;
+    --medium-dim:rgba(255,184,77,.14);
+    --low:#66E3A4;
+    --low-dim:rgba(102,227,164,.14);
+    --clear:#E8EDF6;
+    --clear-dim:rgba(232,237,246,.10);
+    --watch:#FFB84D;
+    --watch-dim:rgba(255,184,77,.14);
+    --active:#B9C7DA;
+    --active-dim:rgba(185,199,218,.10);
+    --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--void);color:var(--text-hi);
+    font-family:'Inter',sans-serif;height:100%;overflow:hidden;-webkit-font-smoothing:antialiased;}
+  ::-webkit-scrollbar{width:7px;height:7px;}
+  ::-webkit-scrollbar-thumb{background:var(--hairline-bright);border-radius:4px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+  :focus-visible{outline:2px solid var(--active);outline-offset:2px;}
+
+  .display{font-family:'Space Grotesk',sans-serif;}
+  .mono{font-family:'IBM Plex Mono',monospace;}
+
+  button{font-family:inherit;cursor:pointer;}
+
+  /* NOTE: layout rule intentionally scoped to #page-investigation.active only (see multi-page nav CSS below) — an unscoped rule here would beat .page{display:none} by ID specificity and show this page even when inactive. */
+
+  /* ============ TOP BAR ============ */
+  header{
+    padding:14px 24px;
+    border-bottom:1px solid var(--hairline);
+    display:flex;align-items:center;justify-content:space-between;
+    background:linear-gradient(180deg, var(--panel) 0%, var(--void) 140%);
+    z-index:10;
+  }
+  .brand{display:flex;align-items:center;gap:12px;}
+  .brand .glyph{width:32px;height:32px;border-radius:8px;background:transparent;border:1.5px solid #5EE7FF;
+    display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#5EE7FF;
+    box-shadow:0 0 16px rgba(94,231,255,.3);font-family:'Space Grotesk',sans-serif;}
+  .brand h1{font-size:19px;font-weight:700;margin:0;letter-spacing:.02em;text-transform:uppercase;color:var(--text-hi);}
+  .brand h1 .accent{color:var(--text-hi);}
+  .brand .tagline{color:var(--text-mid);font-size:11px;margin-left:6px;font-weight:500;letter-spacing:.04em;
+    text-transform:uppercase;display:flex;align-items:center;gap:7px;}
+  .top-right{display:flex;align-items:center;gap:26px;}
+  .status-pill{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-mid);font-weight:500;}
+  .status-dot{width:7px;height:7px;border-radius:50%;background:var(--clear);
+    box-shadow:0 0 0 0 rgba(94,231,255,.6);animation:pulse 2s infinite;}
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(94,231,255,.55);}
+    70%{box-shadow:0 0 0 6px rgba(94,231,255,0);}
+    100%{box-shadow:0 0 0 0 rgba(94,231,255,0);}
+  }
+  .top-stats{display:flex;gap:30px;}
+  .top-stat{text-align:right;}
+  .top-stat .n{font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:700;color:var(--text-hi);}
+  .top-stat .l{font-size:9px;color:var(--text-low);text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px;}
+  .top-stat.n-gold .n{color:var(--watch);}
+  .top-stat.n-risk .n{color:var(--risk);}
+
+  /* ============ MAIN GRID ============ */
+  main{display:grid;grid-template-columns:280px 1fr 340px;overflow:hidden;height:100%;min-height:0;}
+  .col{display:flex;flex-direction:column;overflow:hidden;border-right:1px solid var(--hairline);height:100%;min-height:0;}
+  .col:last-child{border-right:none;}
+  .col-head{padding:14px 18px 12px 18px;border-bottom:1px solid var(--hairline);
+    display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
+  .col-head .title{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-low);font-weight:600;}
+  .col-head .count{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-mid);}
+
+  /* ============ QUEUE (LEFT) ============ */
+  #queue-list{flex:1;min-height:0;overflow-y:auto;padding:8px;}
+  .queue-item{padding:12px 12px 12px 11px;border-radius:8px;cursor:pointer;margin-bottom:4px;
+    border:1px solid transparent;border-left:3px solid var(--hairline-bright);transition:background .12s ease, border-color .12s ease;}
+  .queue-item:hover{background:var(--panel-hover);}
+  .queue-item.active{background:var(--panel-raised);border-color:var(--hairline-bright);}
+  .qi-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+  .qi-id{font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:var(--text-hi);}
+  .qi-badge{font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:2px 7px;border-radius:20px;}
+  .qi-badge.high{background:var(--risk-glow);color:var(--risk);}
+  .qi-badge.medium{background:var(--medium-dim);color:var(--medium);}
+  .qi-badge.low{background:var(--low-dim);color:var(--low);}
+  .qi-meta{font-size:11.5px;color:var(--text-mid);display:flex;gap:10px;}
+  .qi-conf-bar{height:3px;border-radius:2px;background:var(--hairline);margin-top:8px;overflow:hidden;}
+  .qi-conf-fill{height:100%;background:var(--text-mid);}
+
+  /* ============ GRAPH (CENTER) ============ */
+  .ring-header{padding:16px 22px;border-bottom:1px solid var(--hairline);flex-shrink:0;}
+  .rh-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:12px;flex-wrap:wrap;}
+  .rh-id{font-family:'Space Grotesk',sans-serif;font-size:16px;font-weight:600;letter-spacing:-.01em;
+    display:flex;align-items:center;flex-wrap:wrap;gap:2px;white-space:nowrap;}
+  .rh-badge{font-size:11px;font-weight:700;letter-spacing:.05em;padding:4px 11px;border-radius:20px;margin-left:10px;
+    vertical-align:middle;white-space:nowrap;display:inline-block;}
+  .rh-badge.high{background:var(--risk-glow);color:var(--risk);border:1px solid var(--risk-dim);}
+  .rh-badge.medium{background:var(--medium-dim);color:var(--medium);border:1px solid rgba(255,184,77,.35);}
+  .rh-badge.low{background:var(--low-dim);color:var(--low);border:1px solid rgba(102,227,164,.35);}
+  .rh-stats{display:flex;gap:24px;}
+  .rh-stat .n{font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:600;}
+  .rh-stat .l{font-size:10.5px;color:var(--text-low);text-transform:uppercase;letter-spacing:.05em;}
+  .rh-actions{display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0;}
+  .btn{font-size:12.5px;font-weight:600;padding:8px 15px;border-radius:8px;border:1px solid var(--hairline-bright);
+    background:var(--panel-raised);color:var(--text-hi);transition:all .12s ease;display:inline-flex;align-items:center;gap:6px;}
+  .btn:hover{background:var(--panel-hover);border-color:var(--text-low);}
+  .btn.primary{background:var(--text-hi);border-color:var(--text-hi);color:#070A12;}
+  .btn.primary:hover{background:#DCE3EF;border-color:#DCE3EF;}
+  .btn.ghost{background:transparent;}
+  .btn:disabled{opacity:.4;cursor:default;}
+
+  #graph-wrap{flex:1;min-height:0;position:relative;background:
+    radial-gradient(circle at 25% 15%, rgba(210,222,238,.03), transparent 40%),
+    radial-gradient(circle at 80% 85%, rgba(210,222,238,.02), transparent 45%),
+    var(--void);}
+  #graph{width:100%;height:100%;}
+  .legend{position:absolute;bottom:14px;left:16px;display:flex;gap:12px;
+    background:rgba(16,23,36,.9);border:1px solid var(--hairline);border-radius:9px;
+    padding:9px 14px;font-size:11px;color:var(--text-mid);backdrop-filter:blur(8px);}
+  .legend .li{display:flex;align-items:center;gap:6px;white-space:nowrap;}
+  .legend .ld{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+
+  /* ============ APP NAV RAIL + MULTI-PAGE ============ */
+  body.app-active{padding-left:168px;transition:padding-left .18s ease;}
+  body.app-active.nav-collapsed{padding-left:56px;}
+  #app-nav{position:fixed;left:0;top:0;width:168px;height:100vh;background:var(--panel);
+    border-right:1px solid var(--hairline);display:flex;flex-direction:column;
+    padding:18px 0;gap:2px;z-index:40;transition:width .18s ease;overflow:hidden;}
+  #app-nav.collapsed{width:56px;}
+  #app-nav .nav-section-label{padding:0 18px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--text-low);margin-bottom:10px;white-space:nowrap;}
+  #app-nav.collapsed .nav-section-label{opacity:0;}
+  #app-nav .nav-btn{width:100%;border:none;background:transparent;color:var(--text-mid);
+    padding:11px 18px;display:flex;align-items:center;gap:12px;text-align:left;
+    cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:12.5px;letter-spacing:.02em;
+    border-left:2px solid transparent;transition:background .12s ease,color .12s ease;white-space:nowrap;}
+  #app-nav .nav-btn .label{overflow:hidden;text-overflow:ellipsis;}
+  #app-nav.collapsed .nav-btn{padding:11px 0;justify-content:center;}
+  #app-nav.collapsed .nav-btn .label{display:none;}
+  #app-nav .nav-btn:hover{background:var(--panel-hover);color:var(--text-hi);}
+  #app-nav .nav-btn.active{background:var(--panel-raised);color:var(--text-hi);border-left-color:var(--text-hi);}
+  #app-nav-toggle{margin-top:auto;width:100%;border:none;background:transparent;color:var(--text-low);
+    padding:14px 18px;cursor:pointer;font-family:'IBM Plex Mono',monospace;font-size:11px;text-align:left;
+    border-top:1px solid var(--hairline);white-space:nowrap;}
+  #app-nav-toggle:hover{color:var(--text-mid);background:var(--panel-hover);}
+  #app-nav.collapsed #app-nav-toggle{text-align:center;padding:14px 0;}
+  .page{display:none;}
+  #page-risk-api.active, #page-model-health.active, #page-devices.active, #page-audit.active{
+    height:100vh;overflow-y:auto;}
+  .page.active{display:block;}
+  #page-investigation.active{display:grid;grid-template-rows:auto 1fr;height:100vh;}
+  .subpage-wrap{max-width:920px;margin:0 auto;padding:36px 32px 60px 32px;}
+  .subpage-header{margin-bottom:28px;padding-bottom:20px;border-bottom:1px solid var(--hairline);}
+  .subpage-header .eyebrow{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--page-accent,var(--text-low));font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:8px;}
+  .subpage-header .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--page-accent,var(--text-low));box-shadow:0 0 8px var(--page-accent,transparent);}
+  .subpage-header h2{font-family:'Space Grotesk',sans-serif;font-size:26px;margin:0 0 8px 0;letter-spacing:-.01em;}
+  .subpage-header p{color:var(--text-mid);font-size:13.5px;margin:0;max-width:640px;line-height:1.6;}
+  .card-block{background:var(--panel-raised);border:1px solid var(--hairline);border-radius:14px;padding:24px 26px;margin-bottom:20px;
+    transition:border-color .2s ease;}
+  .card-block:hover{border-color:var(--hairline-bright);}
+  .card-block h3{font-size:11.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--page-accent,var(--text-low));margin:0 0 18px 0;font-weight:700;}
+  #page-risk-api{--page-accent:#5EE7FF;} #page-model-health{--page-accent:#FFB84D;} #page-devices{--page-accent:#66E3A4;}
+  .field-row{margin-bottom:16px;}
+  .field-row label{display:block;font-size:11px;color:var(--text-mid);margin-bottom:7px;letter-spacing:.03em;font-weight:500;}
+  .field-row input{width:100%;box-sizing:border-box;background:var(--panel);border:1px solid var(--hairline-bright);
+    border-radius:8px;padding:11px 13px;color:var(--text-hi);font-family:'IBM Plex Mono',monospace;font-size:13px;
+    transition:border-color .15s ease;}
+  .field-row input:focus{outline:none;border-color:var(--page-accent,var(--hairline-bright));}
+  .decision-badge{display:inline-block;font-size:13.5px;font-weight:700;padding:7px 18px;border-radius:20px;letter-spacing:.05em;}
+  .decision-badge.BLOCK{background:var(--risk-glow);color:var(--risk);border:1px solid var(--risk-dim);}
+  .decision-badge.REVIEW{background:var(--medium-dim);color:var(--medium);border:1px solid rgba(255,140,0,.35);}
+  .decision-badge.ALLOW{background:var(--low-dim);color:var(--low);border:1px solid rgba(255,215,0,.35);}
+  .reason-line{padding:8px 0;border-bottom:1px solid var(--hairline);font-size:13px;color:var(--text-mid);}
+  .reason-line:last-child{border-bottom:none;}
+  .metric-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:8px;}
+  .metric-tile{background:var(--panel);border:1px solid var(--hairline);border-radius:10px;padding:16px;text-align:center;}
+  .metric-tile .n{font-family:'Space Grotesk',sans-serif;font-size:24px;font-weight:700;}
+  .metric-tile .l{font-size:10px;color:var(--text-low);text-transform:uppercase;letter-spacing:.05em;margin-top:4px;}
+  .trigger-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--hairline);font-size:12.5px;}
+  .trigger-row:last-child{border-bottom:none;}
+  .trigger-status{font-size:10.5px;font-weight:700;padding:2px 9px;border-radius:20px;letter-spacing:.03em;}
+  .trigger-status.firing{background:var(--risk-glow);color:var(--risk);}
+  .trigger-status.ok{background:var(--panel);color:var(--text-low);border:1px solid var(--hairline-bright);}
+  .replay-btn-wrap{position:absolute;top:14px;right:16px;}
+  #replayBtn{font-size:13px;font-weight:600;padding:9px 18px;border-radius:9px;
+    background:var(--text-hi);border:1px solid var(--text-hi);color:#070A12;box-shadow:0 4px 20px rgba(210,222,238,.1);
+    display:flex;align-items:center;gap:7px;}
+  #replayBtn:hover{background:#DCE3EF;}
+  #replayBtn.playing{background:var(--panel-raised);border-color:var(--hairline-bright);color:var(--text-hi);box-shadow:none;}
+
+  /* timeline strip */
+  #timeline-strip{border-top:1px solid var(--hairline);padding:12px 20px;display:flex;gap:28px;overflow-x:auto;
+    flex-shrink:0;background:var(--panel);}
+  .tl-item{display:flex;flex-direction:column;gap:2px;white-space:nowrap;min-width:150px;flex-shrink:0;position:relative;}
+  .tl-item:not(:last-child):after{content:'';position:absolute;top:9px;right:-18px;width:12px;height:1px;background:var(--hairline-bright);}
+  .tl-time{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--text-low);}
+  .tl-title{font-size:12px;font-weight:600;color:var(--text-hi);}
+  .tl-sub{font-size:10.5px;color:var(--text-mid);}
+
+  /* ============ AGENT PANEL (RIGHT) ============ */
+  #agent-stream{flex:1;min-height:0;overflow-y:auto;padding:14px 16px;}
+  .stream-entry{padding-left:16px;border-left:2px solid var(--hairline);margin-bottom:14px;position:relative;
+    opacity:.3;transition:opacity .3s ease, border-color .3s ease;}
+  .stream-entry.seen{opacity:1;}
+  .stream-entry.current{border-left-color:var(--active);}
+  .stream-entry .icon-dot{position:absolute;left:-7px;top:0;width:12px;height:12px;border-radius:50%;
+    background:var(--panel);border:2px solid var(--hairline-bright);display:flex;align-items:center;justify-content:center;
+    font-size:8px;}
+  .stream-entry.seen .icon-dot{border-color:var(--text-mid);}
+  .stream-entry.kind-evidence.seen .icon-dot{border-color:var(--text-mid);background:var(--panel-hover);}
+  .stream-entry.kind-final.seen .icon-dot{border-color:var(--risk);background:var(--risk-glow);}
+  .stream-entry.kind-cleared.seen .icon-dot{border-color:var(--text-low);}
+  .stream-entry.kind-update.seen .icon-dot{border-color:var(--text-mid);background:var(--panel-hover);}
+  .se-title{font-size:13px;font-weight:600;color:var(--text-hi);margin-bottom:2px;}
+  .se-sub{font-size:12px;color:var(--text-mid);line-height:1.4;}
+
+  /* Live graph: solid risk nodes with a restrained "lit" halo. */
+  #graph .vis-network canvas{outline:none;}
+  .verdict-box{margin:14px 16px;padding:16px;border-radius:var(--radius);background:var(--panel-raised);
+    border:1px solid var(--hairline-bright);text-align:center;transition:background .25s ease,border-color .25s ease,box-shadow .25s ease;}
+  .verdict-box.high-confidence{background:rgba(255,92,103,.11);border-color:rgba(255,92,103,.48);
+    box-shadow:inset 0 0 24px rgba(255,92,103,.06),0 0 24px rgba(255,92,103,.08);} 
+  .verdict-box.high-confidence .vb-label{color:#FF7B84;}
+  .verdict-box.high-confidence .vb-conf{color:#FF5C67;text-shadow:0 0 16px rgba(255,92,103,.25);}
+  .verdict-box .vb-label{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-low);margin-bottom:6px;}
+  .verdict-box .vb-conf{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;color:var(--risk);}
+  .verdict-box .vb-desc{font-size:12.5px;color:var(--text-mid);margin-top:4px;}
+  .verdict-box .btn{width:100%;justify-content:center;margin-top:12px;}
+
+  #agent-footer{padding:12px 16px;border-top:1px solid var(--hairline);display:flex;align-items:center;gap:10px;flex-shrink:0;}
+  #progress-track{flex:1;height:3px;background:var(--hairline);border-radius:2px;overflow:hidden;}
+  #progress-fill{height:100%;background:var(--active);width:0%;transition:width .2s linear;}
+  #step-label{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--text-low);white-space:nowrap;}
+
+  /* ============ MODAL (Account detail) ============ */
+  #modal-overlay{position:fixed;inset:0;background:rgba(8,12,21,.72);backdrop-filter:blur(3px);
+    display:none;align-items:center;justify-content:center;z-index:100;}
+  #modal-overlay.open{display:flex;}
+  #account-modal{width:420px;max-height:82vh;overflow-y:auto;background:var(--panel-raised);
+    border:1px solid var(--hairline-bright);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.5);}
+  .modal-head{padding:20px 22px 16px 22px;border-bottom:1px solid var(--hairline);display:flex;justify-content:space-between;
+    align-items:flex-start;}
+  .modal-head .mid{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-low);margin-bottom:4px;}
+  .modal-head h2{font-family:'Space Grotesk',sans-serif;font-size:19px;margin:0;}
+  .modal-close{background:none;border:none;color:var(--text-mid);font-size:18px;padding:2px 6px;border-radius:6px;}
+  .modal-close:hover{background:var(--panel-hover);color:var(--text-hi);}
+  .modal-body{padding:20px 22px;}
+  .risk-ring{display:flex;align-items:center;gap:16px;margin-bottom:18px;}
+  .risk-ring-num{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:700;color:var(--risk);}
+  .risk-ring-label{font-size:11px;color:var(--text-low);text-transform:uppercase;letter-spacing:.06em;}
+  .status-chip{display:inline-block;font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:20px;
+    background:var(--risk-glow);color:var(--risk);margin-top:4px;}
+  .evidence-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;
+    border-bottom:1px solid var(--hairline);}
+  .evidence-row:last-child{border-bottom:none;}
+  .ev-left{display:flex;align-items:center;gap:10px;font-size:13px;}
+  .ev-strength{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:20px;}
+  .ev-strength.Strong{background:var(--risk-glow);color:var(--risk);}
+  .ev-strength.Medium{background:var(--watch-dim);color:var(--watch);}
+  .ev-strength.Supporting{background:var(--hairline);color:var(--text-mid);}
+  .assessment-box{margin-top:16px;padding:13px 14px;background:var(--panel);border-radius:9px;
+    border:1px solid var(--hairline);font-size:12.5px;color:var(--text-mid);line-height:1.5;}
+  .assessment-box .al{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--text-low);margin-bottom:6px;font-weight:600;}
+  .modal-actions{display:flex;gap:8px;margin-top:18px;}
+  .modal-actions .btn{flex:1;justify-content:center;}
+
+  /* empty state */
+  .empty-cleared{font-size:11.5px;color:var(--text-low);padding:10px 0;font-style:italic;}
+
+  /* ============ RING INTELLIGENCE MODAL ============ */
+  #ri-modal{width:720px;max-height:86vh;overflow-y:auto;background:var(--panel-raised);
+    border:1px solid var(--hairline-bright);border-radius:14px;box-shadow:0 30px 80px rgba(0,0,0,.5);}
+  .ri-head{padding:22px 26px 18px 26px;border-bottom:1px solid var(--hairline);display:flex;
+    justify-content:space-between;align-items:flex-start;}
+  .ri-head .ri-eyebrow{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--active);
+    font-weight:700;margin-bottom:6px;}
+  .ri-head h2{font-family:'Space Grotesk',sans-serif;font-size:21px;margin:0;}
+  .ri-body{padding:22px 26px;}
+  .ri-loading{display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:60px 20px;gap:16px;}
+  .ri-loading .spinner{width:36px;height:36px;border-radius:50%;border:3px solid var(--hairline);
+    border-top-color:var(--active);animation:spin 0.9s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .ri-loading .step-text{font-size:13px;color:var(--text-mid);font-family:'IBM Plex Mono',monospace;}
+
+  .ri-section{margin-bottom:24px;}
+  .ri-section:last-child{margin-bottom:0;}
+  .ri-label{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-low);
+    font-weight:700;margin-bottom:10px;}
+  .ri-pattern-badge{display:inline-block;font-size:13px;font-weight:600;padding:6px 14px;border-radius:20px;
+    background:var(--active-dim);color:var(--active);border:1px solid rgba(94,231,255,.3);}
+  .ri-evidence-line{display:flex;align-items:baseline;gap:10px;padding:8px 0;font-size:13.5px;
+    border-bottom:1px solid var(--hairline);}
+  .ri-evidence-line:last-child{border-bottom:none;}
+  .ri-evidence-line .n{font-family:'IBM Plex Mono',monospace;color:var(--risk);font-weight:700;min-width:20px;}
+  .ri-summary-text{font-size:13.5px;line-height:1.65;color:var(--text-mid);}
+  .ri-accounts-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .ri-account-card{background:var(--panel);border:1px solid var(--hairline);border-radius:10px;padding:12px 14px;}
+  .ri-account-card .ac-id{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;
+    display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;}
+  .ri-account-card .ac-role{font-size:10.5px;color:var(--active);font-weight:600;margin-bottom:6px;}
+  .ri-account-card .ac-evidence{font-size:11.5px;color:var(--text-mid);line-height:1.5;}
+  .ri-account-card .ac-conf{font-size:9.5px;font-weight:700;padding:1px 7px;border-radius:20px;text-transform:uppercase;}
+  .ri-account-card .ac-conf.high{background:var(--risk-glow);color:var(--risk);}
+  .ri-account-card .ac-conf.medium{background:var(--watch-dim);color:var(--watch);}
+  .ri-account-card .ac-conf.low{background:var(--hairline);color:var(--text-mid);}
+  .ri-weakest-box{background:var(--watch-dim);border:1px solid rgba(255,184,77,.3);border-radius:10px;
+    padding:14px 16px;font-size:13px;color:var(--text-mid);}
+  .ri-weakest-box .w-id{font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--watch);margin-bottom:4px;}
+  .ri-action-row{display:flex;align-items:center;justify-content:space-between;padding-top:6px;}
+  .ri-source-tag{font-size:10px;color:var(--text-low);font-family:'IBM Plex Mono',monospace;
+    display:flex;align-items:center;gap:6px;margin-top:18px;padding-top:14px;border-top:1px solid var(--hairline);}
+
+  @media (max-width: 980px){
+    main{grid-template-columns:1fr;grid-template-rows:auto 1fr auto;}
+    .col{border-right:none;border-bottom:1px solid var(--hairline);}
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:0.01ms !important; animation-iteration-count:1 !important; transition-duration:0.01ms !important;}
+  }
+
+  /* ============ LANDING SCREEN (radar / split layout) ============ */
+  #landing{position:fixed;inset:0;z-index:1000;background:#070A12;
+    display:grid;grid-template-columns:1fr 1fr;overflow:hidden;
+    transition:opacity .6s ease, visibility .6s ease;}
+  #landing.hidden{opacity:0;visibility:hidden;pointer-events:none;}
+
+  #landing #ambient-bleed{position:fixed;top:50%;right:0;transform:translateY(-50%);
+    width:1100px;height:1100px;pointer-events:none;z-index:1;
+    background:radial-gradient(circle, rgba(94,231,255,.10) 0%, rgba(94,231,255,.045) 30%, transparent 62%);
+    animation:ambientPulse 4.5s ease-in-out infinite;}
+  @keyframes ambientPulse{0%,100%{opacity:.7;}50%{opacity:1;}}
+
+  .lg-left{display:flex;flex-direction:column;justify-content:center;padding:0 70px;
+    position:relative;z-index:5;font-family:'IBM Plex Mono',monospace;color:#EAF7FF;}
+  .lg-glyph{width:56px;height:56px;border:1.5px solid #5EE7FF;border-radius:12px;
+    display:flex;align-items:center;justify-content:center;font-family:'Space Grotesk',sans-serif;
+    font-weight:700;font-size:21px;margin-bottom:26px;color:#5EE7FF;
+    box-shadow:0 0 30px rgba(94,231,255,.3), inset 0 0 20px rgba(94,231,255,.08);}
+  .lg-title{font-family:'Space Grotesk',sans-serif;font-size:36px;font-weight:700;letter-spacing:.005em;
+    line-height:1.05;margin-bottom:14px;white-space:nowrap;}
+  .lg-title span{color:#5EE7FF;}
+  .lg-tagline{font-size:14px;color:#8AA8B8;margin-bottom:14px;letter-spacing:.03em;max-width:420px;line-height:1.5;}
+  .lg-status-line{font-size:11px;color:#5EE7FF;margin-bottom:38px;letter-spacing:.08em;
+    display:flex;align-items:center;gap:8px;}
+  .lg-status-dot{width:6px;height:6px;border-radius:50%;background:#5EE7FF;
+    box-shadow:0 0 8px #5EE7FF;animation:lgBlipPulse 1.6s ease-in-out infinite;}
+  @keyframes lgBlipPulse{0%,100%{opacity:.35;transform:scale(1);}50%{opacity:1;transform:scale(1.6);}}
+
+  .lg-metrics{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:36px;max-width:440px;}
+  .lg-metric{background:rgba(94,231,255,.03);border:1px solid #1D3440;padding:16px 20px;position:relative;}
+  .lg-metric::before,.lg-metric::after{content:'';position:absolute;width:8px;height:8px;
+    border-color:#5EE7FF;border-style:solid;opacity:.6;}
+  .lg-metric::before{top:-1px;left:-1px;border-width:1px 0 0 1px;}
+  .lg-metric::after{bottom:-1px;right:-1px;border-width:0 1px 1px 0;}
+  .lg-metric .n{font-family:'Space Grotesk',sans-serif;font-size:23px;font-weight:700;color:#EAF7FF;}
+  .lg-metric .l{font-size:9px;letter-spacing:.09em;text-transform:uppercase;color:#8AA8B8;margin-top:5px;}
+
+  .lg-enter{background:transparent;border:1.5px solid #5EE7FF;color:#5EE7FF;
+    padding:14px 36px;font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;
+    letter-spacing:.1em;text-transform:uppercase;cursor:pointer;transition:all .2s ease;width:fit-content;}
+  .lg-enter:hover{background:rgba(94,231,255,.1);box-shadow:0 0 30px rgba(94,231,255,.3);}
+  .lg-sub{margin-top:18px;font-size:10.5px;color:#40586B;letter-spacing:.05em;}
+
+  .lg-right{position:relative;overflow:hidden;
+    background:radial-gradient(ellipse at center, #08131B 0%, #070A12 75%);}
+  #radar-wrap{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:600px;height:600px;}
+  .radar-ring{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    border:1px solid rgba(94,231,255,.14);border-radius:50%;}
+  .rr1{width:132px;height:132px;} .rr2{width:248px;height:248px;}
+  .rr3{width:366px;height:366px;} .rr4{width:484px;height:484px;} .rr5{width:600px;height:600px;}
+  .radar-cross{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:600px;height:1px;background:rgba(94,231,255,.1);}
+  .radar-cross.vert{width:1px;height:600px;}
+  #radar-sweep{position:absolute;top:50%;left:50%;width:600px;height:600px;
+    transform:translate(-50%,-50%);border-radius:50%;overflow:hidden;animation:sweepRotate 4s linear infinite;}
+  #radar-sweep::before{content:'';position:absolute;inset:0;
+    background:conic-gradient(from 0deg at 50% 50%,
+      rgba(94,231,255,.75) 0deg, rgba(94,231,255,.35) 12deg,
+      rgba(94,231,255,.12) 35deg, rgba(94,231,255,0) 75deg, transparent 360deg);
+    filter:blur(3px);}
+  @keyframes sweepRotate{from{transform:translate(-50%,-50%) rotate(0deg);}to{transform:translate(-50%,-50%) rotate(360deg);}}
+  .radar-blip{position:absolute;width:6px;height:6px;border-radius:50%;background:#FF5C67;
+    box-shadow:0 0 10px #FF5C67, 0 0 20px #FF5C67;animation:lgBlip2 2.4s ease-in-out infinite;}
+  .radar-blip.amber{background:#B79CFF;box-shadow:0 0 10px #B79CFF,0 0 20px #B79CFF;}
+  @keyframes lgBlip2{0%,100%{opacity:.35;transform:scale(1);}50%{opacity:1;transform:scale(1.6);}}
+  .radar-scan-grid{position:absolute;inset:0;background-image:
+    linear-gradient(rgba(94,231,255,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(94,231,255,.03) 1px, transparent 1px);
+    background-size:34px 34px;
+    mask-image:radial-gradient(circle at 50% 50%, black 0%, black 45%, transparent 75%);}
+  .radar-center-glow{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:8px;height:8px;border-radius:50%;background:#5EE7FF;
+    box-shadow:0 0 20px #5EE7FF, 0 0 40px #5EE7FF;}
+
+  @media (max-width: 980px){
+    #landing{grid-template-columns:1fr;}
+    .lg-right{display:none;}
+  }
+</style>
+</head>
+<body>
+<div id="landing">
+  <div id="ambient-bleed"></div>
+  <div class="lg-left">
+    <div class="lg-glyph">RS</div>
+    <div class="lg-title">RING <span>SENTINEL</span></div>
+    <div class="lg-tagline">Coordinated abuse intelligence — autonomous investigation, live. Real-time detection across every account in the network.</div>
+    <div class="lg-status-line"><span class="lg-status-dot"></span> LIVE — <span id="lg-status-count">…</span> ACTIVE INVESTIGATIONS</div>
+
+    <div class="lg-metrics" id="lg-metrics">
+      <div class="lg-metric"><div class="n" id="lgm-accounts">—</div><div class="l">Accounts Monitored</div></div>
+      <div class="lg-metric"><div class="n" id="lgm-rings">—</div><div class="l">Rings Detected</div></div>
+      <div class="lg-metric"><div class="n" id="lgm-active">—</div><div class="l">Active Investigations</div></div>
+      <div class="lg-metric"><div class="n" id="lgm-exposure">—</div><div class="l">Exposure Identified</div></div>
+    </div>
+    <button class="lg-enter" id="lg-enter-btn">Enter Dashboard →</button>
+    <div class="lg-sub">GraphSAGE + XGBoost detection · adaptive live investigation agent</div>
+  </div>
+
+  <div class="lg-right">
+    <div class="radar-scan-grid"></div>
+    <div id="radar-wrap">
+      <div class="radar-cross"></div>
+      <div class="radar-cross vert"></div>
+      <div class="radar-ring rr1"></div>
+      <div class="radar-ring rr2"></div>
+      <div class="radar-ring rr3"></div>
+      <div class="radar-ring rr4"></div>
+      <div class="radar-ring rr5"></div>
+      <div id="radar-sweep"></div>
+      <div class="radar-center-glow"></div>
+      <div class="radar-blip" style="top:32%;left:58%;"></div>
+      <div class="radar-blip amber" style="top:62%;left:38%;animation-delay:.7s;"></div>
+      <div class="radar-blip" style="top:44%;left:22%;animation-delay:1.3s;"></div>
+      <div class="radar-blip amber" style="top:70%;left:64%;animation-delay:.4s;"></div>
+      <div class="radar-blip" style="top:20%;left:44%;animation-delay:1.8s;"></div>
+    </div>
+  </div>
+</div>
+<nav id="app-nav" style="display:none;">
+  <div class="nav-section-label">Ring Sentinel</div>
+  <button class="nav-btn active" data-page="page-investigation"><span class="label">Investigate</span></button>
+  <button class="nav-btn" data-page="page-risk-api"><span class="label">Risk API</span></button>
+  <button class="nav-btn" data-page="page-model-health"><span class="label">Model Health</span></button>
+  <button class="nav-btn" data-page="page-devices"><span class="label">Devices</span></button>
+  <button class="nav-btn" data-page="page-audit"><span class="label">Audit Log</span></button>
+  <button id="app-nav-toggle">&#171; Collapse</button>
+</nav>
+<div id="page-investigation" class="page active">
+
+  <header>
+    <div class="brand">
+      <span class="glyph">RS</span>
+      <h1 class="display">RING <span class="accent">SENTINEL</span></h1>
+      <span class="tagline"><span class="status-dot"></span> LIVE SYSTEM OPERATIONAL</span>
+    </div>
+    <div class="top-right">
+      <div class="status-pill" id="modelHealthBadge" style="cursor:pointer;"></div>
+      <div class="top-stats" id="top-stats"></div>
+    </div>
+  </header>
+  <div id="retrainBanner" style="display:none;background:var(--watch-dim);border-bottom:1px solid rgba(255,184,77,.35);
+      padding:10px 24px;font-size:12.5px;color:var(--watch);flex-direction:column;gap:2px;"></div>
+
+  <main id="main-grid">
+    <!-- LEFT: QUEUE -->
+    <section class="col">
+      <div class="col-head"><span class="title">Investigations</span><span class="count" id="queue-count"></span></div>
+      <div style="padding:12px 14px;border-bottom:1px solid var(--hairline);background:var(--panel);">
+        <div style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--active);font-weight:700;margin-bottom:8px;">
+          + New Investigation
+        </div>
+        <input id="customAccountInput" type="text" placeholder="Account ID, e.g. ACC018500"
+          style="width:100%;box-sizing:border-box;background:var(--panel-raised);border:1px solid var(--hairline-bright);
+            border-radius:7px;padding:8px 10px;color:var(--text-hi);font-family:'IBM Plex Mono',monospace;
+            font-size:12px;margin-bottom:8px;">
+        <button id="customInvestigateBtn" class="btn" style="width:100%;justify-content:center;font-size:12px;
+            background:var(--clear);border-color:var(--clear);color:#070A12;font-weight:700;">
+          Investigate from Scratch
+        </button>
+        <div id="customInvestigateError" style="color:var(--risk);font-size:11px;margin-top:6px;display:none;"></div>
+      </div>
+      <div style="padding:8px 14px;border-bottom:1px solid var(--hairline);">
+        <select id="sortSelect" style="width:100%;background:var(--panel-raised);border:1px solid var(--hairline-bright);
+            color:var(--text-hi);font-family:'IBM Plex Mono',monospace;font-size:11px;padding:7px 9px;border-radius:6px;">
+          <option value="recent">Most Recent</option>
+          <option value="risk-desc">Risk: High → Low</option>
+          <option value="risk-asc">Risk: Low → High</option>
+          <option value="exposure-desc">Exposure: High → Low</option>
+        </select>
+      </div>
+      <div id="queue-list"></div>
+    </section>
+
+    <!-- CENTER: GRAPH -->
+    <section class="col">
+      <div class="ring-header" id="ring-header"></div>
+      <div id="graph-wrap">
+        <div id="graph"></div>
+        <div class="replay-btn-wrap">
+          <button id="replayBtn">▶ Run Live Investigation</button>
+        </div>
+        <div class="legend">
+          <div class="li"><span class="ld" style="background:#66E3A4;box-shadow:0 0 6px #66E3A4;"></span>Low Risk</div>
+          <div class="li"><span class="ld" style="background:#FFB84D;box-shadow:0 0 6px #FFB84D;"></span>Medium Risk</div>
+          <div class="li"><span class="ld" style="background:#FF5C67;box-shadow:0 0 6px #FF5C67;"></span>High Risk</div>
+          <div class="li"><span class="ld" style="background:#66738B;"></span>Cleared / Inactive</div>
+        </div>
+      </div>
+      <div id="timeline-strip"></div>
+    </section>
+
+    <!-- RIGHT: AGENT -->
+    <section class="col" id="agent-col">
+      <div class="col-head"><span class="title">Agent Investigation Feed</span><span class="mono count" id="agent-count"></span></div>
+      <div id="agent-stream"></div>
+      <div id="verdict-container"></div>
+      <button class="view-log-btn" style="margin:0 16px 12px 16px;padding:9px;background:var(--panel-raised);
+          border:1px solid var(--hairline-bright);color:var(--text-mid);border-radius:7px;
+          font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;"
+          onclick="document.getElementById('agent-stream').scrollTop=0;">View Full Activity Log</button>
+      <div id="agent-footer">
+        <span id="step-label" class="mono"></span>
+        <div id="progress-track"><div id="progress-fill"></div></div>
+      </div>
+    </section>
+  </main>
+
+</div>
+
+<!-- ============ RISK API PAGE ============ -->
+<div id="page-risk-api" class="page">
+  <div class="subpage-wrap">
+    <div class="subpage-header">
+      <div class="eyebrow"><span class="dot"></span>Product Surface</div>
+      <h2>Real-Time Risk API</h2>
+      <p>The same trained model and the same thresholds used everywhere else in this system (0.55 / 0.28), exposed as a single call a merchant's checkout or risk pipeline would make. Try it against any account in the current dataset.</p>
+    </div>
+    <div class="card-block">
+      <h3>Try It</h3>
+      <div class="field-row"><label>Account ID</label><input id="riskApiAccountId" placeholder="e.g. ACC018394"></div>
+      <div class="field-row"><label>Transaction ID (optional)</label><input id="riskApiTxnId" placeholder="e.g. TX88421"></div>
+      <div class="field-row"><label>Amount (optional)</label><input id="riskApiAmount" placeholder="e.g. 4999" type="number"></div>
+      <button class="btn primary" id="riskApiSubmit" style="margin-top:6px;">Evaluate Risk</button>
+    </div>
+    <div id="riskApiResult"></div>
+    <div class="card-block">
+      <h3>Endpoint</h3>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--text-mid);line-height:1.9;
+          background:var(--panel);border:1px solid var(--hairline);border-radius:8px;padding:16px 18px;">
+        <span style="color:var(--page-accent);font-weight:700;">POST</span> /api/risk/evaluate<br>
+        <span style="color:var(--text-low);">{"account_id": "ACC018500", "transaction_id": "TX001", "amount": 4999}</span><br><br>
+        <span style="color:var(--low);">&#8594;</span> { risk_score, decision, risk_level, reasons[], ring_id, device_sharing, thresholds_used }
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODEL HEALTH PAGE ============ -->
+<div id="page-model-health" class="page">
+  <div class="subpage-wrap">
+    <div class="subpage-header">
+      <div class="eyebrow"><span class="dot"></span>System Monitoring</div>
+      <h2>Model Health</h2>
+      <p>Live evaluation metrics, data drift, and the four independent retrain triggers — computed fresh on every load, not cached.</p>
+    </div>
+    <div class="card-block">
+      <h3>Latest Full Evaluation (v9, 5-relation model)</h3>
+      <div class="metric-grid">
+        <div class="metric-tile"><div class="n">99.1%</div><div class="l">Precision</div></div>
+        <div class="metric-tile"><div class="n">91.3%</div><div class="l">Recall</div></div>
+        <div class="metric-tile"><div class="n">99.3%</div><div class="l">Ring Recall</div></div>
+      </div>
+    </div>
+    <div class="card-block">
+      <h3>Data Drift</h3>
+      <div id="driftDetail">Loading…</div>
+    </div>
+    <div class="card-block">
+      <h3>Retrain Triggers</h3>
+      <div id="triggerDetail">Loading…</div>
+      <button class="btn primary" id="modelHealthRetrainBtn" style="margin-top:14px;display:none;">Retrain Model</button>
+      <div id="modelHealthRetrainStatus" style="margin-top:8px;font-size:12px;color:var(--text-low);"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ ENTITY GRAPH / DEVICES PAGE ============ -->
+<div id="page-devices" class="page">
+  <div class="subpage-wrap">
+    <div class="subpage-header">
+      <div class="eyebrow"><span class="dot"></span>Relationship Intelligence</div>
+      <h2>Entity Graph — Devices</h2>
+      <p>Look up a device fingerprint to see every account connected to it, how many are high-risk, and which confirmed rings they belong to.</p>
+    </div>
+    <div class="card-block">
+      <h3>Look Up a Device</h3>
+      <div class="field-row"><label>Device Fingerprint</label><input id="deviceLookupInput" placeholder="e.g. 32731509-81e"></div>
+      <button class="btn primary" id="deviceLookupSubmit">Look Up</button>
+    </div>
+    <div id="deviceResult"></div>
+  </div>
+</div>
+
+<!-- ============ AUDIT LOG PAGE ============ -->
+<div id="page-audit" class="page">
+  <div class="subpage-wrap" style="max-width:1080px;">
+    <div class="subpage-header">
+      <div class="eyebrow"><span class="dot"></span>Accountability</div>
+      <h2>Audit Log</h2>
+      <p>Every Escalate / Watch / Dismiss decision taken this session, what the AI itself recommended at the time, and whether the analyst agreed or overrode it. Read directly from the same record every other part of this app uses — nothing summarized separately.</p>
+    </div>
+    <div class="metric-grid" style="grid-template-columns:repeat(2,1fr);margin-bottom:20px;">
+      <div class="metric-tile"><div class="n" id="auditTotalDecisions">—</div><div class="l">Total Decisions</div></div>
+      <div class="metric-tile"><div class="n" id="auditOverrideCount" style="color:var(--medium);">—</div><div class="l">Analyst Overrides</div></div>
+    </div>
+    <div class="card-block" style="padding:0;overflow:hidden;">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+        <thead>
+          <tr style="border-bottom:1px solid var(--hairline);">
+            <th style="text-align:left;padding:14px 16px;color:var(--text-low);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;">Ring</th>
+            <th style="text-align:left;padding:14px 16px;color:var(--text-low);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;">AI Recommended</th>
+            <th style="text-align:left;padding:14px 16px;color:var(--text-low);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;">Analyst Decided</th>
+            <th style="text-align:left;padding:14px 16px;color:var(--text-low);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;">Agreement</th>
+            <th style="text-align:left;padding:14px 16px;color:var(--text-low);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;">Exposure</th>
+            <th style="text-align:left;padding:14px 16px;color:var(--text-low);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;">When</th>
+          </tr>
+        </thead>
+        <tbody id="auditTableBody">
+          <tr><td colspan="6" style="padding:24px 16px;color:var(--text-low);text-align:center;">Loading\u2026</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+
+<div id="modal-overlay">
+  <div id="account-modal"></div>
+</div>
+
+<div id="ri-modal-overlay" style="position:fixed;inset:0;background:rgba(8,12,21,.72);backdrop-filter:blur(3px);
+    display:none;align-items:center;justify-content:center;z-index:110;">
+  <div id="ri-modal"></div>
+</div>
+
+<script>
+const API = '';   // same-origin; change if backend runs elsewhere
+
+async function fetchJSON(url, opts){
+  const res = await fetch(API + url, opts);
+  return res;
+}
+
+let ALL_RINGS = [];
+let STATS = {};
+let currentRingId = null;
+
+/* ---------------- INIT ---------------- */
+async function init(){
+  const [statsRes, ringsRes] = await Promise.all([
+    fetchJSON('/api/stats'), fetchJSON('/api/rings')
+  ]);
+  STATS = await statsRes.json();
+  ALL_RINGS = await ringsRes.json();
+
+  document.getElementById('top-stats').innerHTML = `
+    <div class="top-stat"><div class="l">Accounts</div><div class="n">${STATS.total_accounts.toLocaleString()}</div></div>
+    <div class="top-stat"><div class="l">Rings</div><div class="n">${STATS.total_rings}</div></div>
+    <div class="top-stat n-gold"><div class="l">Active</div><div class="n">${STATS.active_investigations.toLocaleString()}</div></div>
+    <div class="top-stat n-risk"><div class="l">Exposure</div><div class="n">₹${STATS.total_exposure_inr.toLocaleString(undefined,{maximumFractionDigits:0})}</div></div>
+  `;
+
+  document.getElementById('queue-count').textContent = ALL_RINGS.length;
+  renderQueue();
+  if(ALL_RINGS.length) loadRing(ALL_RINGS[0].ring_id);
+
+  refreshModelHealth();
+}
+
+async function refreshModelHealth(){
+  try {
+    const [driftRes, feedbackRes] = await Promise.all([fetchJSON('/api/drift'), fetchJSON('/api/feedback-stats')]);
+    const drift = await driftRes.json();
+    const feedback = await feedbackRes.json();
+
+    const sevColor = {none: 'var(--clear)', moderate: 'var(--watch)', severe: 'var(--risk)'};
+    const badge = document.getElementById('modelHealthBadge');
+    badge.innerHTML = `<span class="status-dot" style="background:${sevColor[drift.overall_severity]};animation:none;"></span> Model Health: ${drift.overall_severity === 'none' ? 'Stable' : drift.overall_severity.toUpperCase()+' DRIFT'}`;
+    badge.onclick = () => showModelHealthDetail(drift, feedback);
+
+    const banner = document.getElementById('retrainBanner');
+    if(feedback.retrain_recommended){
+      const TRIGGER_LABEL = {override_rate: 'analyst override rate', performance_degradation: 'escalate-verdict agreement',
+                              data_drift_psi: 'data drift', scheduled_interval: 'scheduled interval'};
+      const firedKeys = Object.entries(feedback.triggers).filter(([k,v]) => v.firing).map(([k]) => k);
+      const firedNames = firedKeys.map(k => TRIGGER_LABEL[k]).join(' and ');
+      const detail = Object.entries(feedback.triggers).filter(([k,v]) => v.firing)
+        .map(([k,v]) => v.detail).join(' · ');
+
+      // Be honest about what retraining will actually do here: it only
+      // refits on analyst overrides (Escalate/Watch/Dismiss decisions).
+      // If drift or the scheduled interval is the ONLY thing firing —
+      // zero analyst decisions yet — clicking Retrain has nothing to
+      // learn from and won't change the model's scores. Say that
+      // plainly instead of implying the button is a universal fix.
+      const onlyStructural = firedKeys.every(k => k === 'data_drift_psi' || k === 'scheduled_interval')
+                              && feedback.total_decisions === 0;
+      const explainer = onlyStructural
+        ? `No analyst decisions have been recorded yet, so retraining right now would have nothing to correct against — it would refit on the same data and likely return the same scores. Clicking Retrain will still acknowledge the current drift level, though, so this banner won't keep reappearing for the same unchanged number — it'll only come back if drift genuinely gets worse than this, or once analyst decisions start coming in.`
+        : `Retraining will refit the model using the ${feedback.overridden_decisions} analyst override(s) recorded so far as corrected labels.`;
+
+      banner.style.display = 'flex';
+      banner.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <strong>Retrain recommended</strong> — ${firedNames} triggered this (${detail}).
+          <button id="retrainNowBtn" class="btn primary" style="padding:3px 12px;font-size:11px;">Retrain Model</button>
+          <span id="retrainStatus" style="color:var(--text-low);"></span>
+        </div>
+        <div style="font-size:11px;color:var(--text-low);margin-top:4px;">${explainer}</div>
+      `;
+      document.getElementById('retrainNowBtn').onclick = runRetrain;
+    } else {
+      banner.style.display = 'none';
+    }
+  } catch(err){ console.error('Model health check failed', err); }
+}
+
+function showModelHealthDetail(drift, feedback){
+  const rsd = drift.risk_score_drift, emd = drift.evidence_mix_drift;
+  const t = feedback.triggers;
+  alert(
+    `MODEL HEALTH REPORT\n\n` +
+    `Risk score drift (train vs test):\n` +
+    `  PSI: ${rsd.psi}  (severity: ${rsd.severity})\n` +
+    `  Wasserstein: ${rsd.wasserstein_distance}\n` +
+    `  KL divergence: ${rsd.ks_statistic} (p=${rsd.ks_pvalue})\n\n` +
+    `Evidence-type mix drift (train vs test):\n` +
+    `  PSI: ${emd.psi}  (severity: ${emd.severity})\n\n` +
+    `RETRAIN TRIGGERS (any firing = retrain recommended):\n` +
+    `  1. Override rate: ${(t.override_rate.value*100).toFixed(1)}% (n=${t.override_rate.sample_size}, need >=${t.override_rate.min_sample_required}) — ${t.override_rate.firing?'FIRING':'ok'}\n` +
+    `  2. Escalate-agreement: ${(t.performance_degradation.value*100).toFixed(1)}% (n=${t.performance_degradation.sample_size}, need >=${t.performance_degradation.min_sample_required}) — ${t.performance_degradation.firing?'FIRING':'ok'}\n` +
+    `  3. Data drift PSI: ${t.data_drift_psi.value} — ${t.data_drift_psi.firing?'FIRING':'ok'}\n` +
+    `  4. Scheduled (${t.scheduled_interval.threshold}d): ${t.scheduled_interval.value}d elapsed — ${t.scheduled_interval.firing?'FIRING':'ok'}\n\n` +
+    `Last retrain: ${feedback.last_retrain_at ? new Date(feedback.last_retrain_at).toLocaleString() : 'never this session'}\n` +
+    `Retrain recommended: ${feedback.retrain_recommended ? 'YES' : 'no'}`
+  );
+}
+
+async function runRetrain(){
+  const btn = document.getElementById('retrainNowBtn');
+  const status = document.getElementById('retrainStatus');
+  btn.disabled = true; btn.textContent = 'Retraining\u2026';
+  status.textContent = 'Refitting on analyst corrections\u2026';
+  try {
+    const res = await fetchJSON('/api/retrain', {method: 'POST'});
+    const result = await res.json();
+    if(!res.ok){ throw new Error(result.detail || 'retrain failed'); }
+    status.textContent = `\u2713 Done in ${result.elapsed_seconds}s — ${result.accounts_label_corrected} accounts corrected from ${result.rings_used_for_correction} overridden ring(s), ${result.accounts_flipped_verdict} verdicts shifted. Session-only (not written to disk).`;
+    await refreshModelHealth();   // banner disappears since counters just reset
+  } catch(err){
+    status.textContent = 'Retrain failed: ' + err.message;
+    btn.disabled = false; btn.textContent = 'Retrain Model';
+  }
+}
+
+/* ---------------- QUEUE ---------------- */
+const queueList = document.getElementById('queue-list');
+function riskBadge(r){
+  if(r.risk_label === 'HIGH') return 'high';
+  if(r.risk_label === 'MEDIUM') return 'medium';
+  return 'low';
+}
+
+const ACTION_LABEL = {escalated:'ESCALATED', on_watch:'ON WATCH', dismissed:'DISMISSED'};
+
+let sortMode = 'recent';
+
+function sortedRings(){
+  const arr = [...ALL_RINGS];
+  if(sortMode === 'risk-desc') arr.sort((a,b) => b.confidence - a.confidence);
+  else if(sortMode === 'risk-asc') arr.sort((a,b) => a.confidence - b.confidence);
+  else if(sortMode === 'exposure-desc') arr.sort((a,b) => b.exposure_inr - a.exposure_inr);
+  return arr;   // 'recent' = server order, already the default
+}
+
+function renderQueue(){
+  queueList.innerHTML = '';
+  sortedRings().forEach(r => {
+    const el = document.createElement('div');
+    el.className = 'queue-item risk-' + riskBadge(r) + (r.ring_id === currentRingId ? ' active' : '');
+    const actionTag = (r.action_status && r.action_status !== 'pending')
+      ? `<span class="qi-badge" style="background:var(--panel-hover);color:var(--text-mid);margin-left:6px;">${ACTION_LABEL[r.action_status]}</span>` : '';
+    el.innerHTML = `
+      <div class="qi-top">
+        <span class="qi-id">${r.ring_id}</span>
+        <span>${actionTag}<span class="qi-badge ${riskBadge(r)}">${r.risk_label}</span></span>
+      </div>
+      <div class="qi-meta">
+        <span>${r.account_count} accounts</span>
+        <span>₹${r.exposure_inr.toLocaleString(undefined,{maximumFractionDigits:0})}</span>
+      </div>
+      <div class="qi-conf-bar"><div class="qi-conf-fill" style="width:${(r.confidence*100).toFixed(0)}%"></div></div>
+    `;
+    el.onclick = () => loadRing(r.ring_id);
+    queueList.appendChild(el);
+  });
+}
+
+/* ---------------- GRAPH SETUP ---------------- */
+let network = null;
+let liveGraphGrowing = false;   // true for custom (from-scratch) investigations — keeps physics on as nodes are added live
+let visNodesDS = null, visEdgesDS = null;
+
+const REL_COLOR = {
+  shared_payout: 'rgba(174,187,208,.35)',
+  referral: 'rgba(174,187,208,.35)',
+  coordinated_activity: 'rgba(174,187,208,.35)',
+  proximity: 'rgba(174,187,208,.35)',
+};
+const GRAPH_NEUTRAL_NODE_BG = '#263143';
+const GRAPH_NEUTRAL_NODE_BORDER = '#AEBBD0';
+
+function buildGraph(ring){
+  try {
+  const nodes = ring.nodes.map(n => ({
+    id: n.id, label: n.id.replace('ACC',''),
+    color: {background: GRAPH_NEUTRAL_NODE_BG, border: GRAPH_NEUTRAL_NODE_BORDER},
+    font: {color:'#DCE3EF', size:10, face:'IBM Plex Mono'}, size: 13, borderWidth:2.5,
+    shadow:{enabled:true, color:'rgba(174,187,208,.22)', size:7, x:0, y:0},
+  }));
+  (ring.cleared_neighbors||[]).forEach(c => {
+    nodes.push({id:c.id, label:c.id.replace('ACC',''),
+      color:{background:'#202938', border: '#66738B'},
+      font:{color:'#8795AB', size:10, face:'IBM Plex Mono'}, size:11, borderWidth:1.5, shapeProperties:{borderDashes:[3,3]}});
+  });
+
+  const edges = ring.edges.map((e,i) => ({
+    id:'e'+i, from:e.from, to:e.to,
+    color:{color: REL_COLOR[e.type] || 'rgba(128,143,166,.3)'},
+    width: e.strength==='Strong'?2.2:1.2,
+    dashes: e.strength==='Supporting',
+  }));
+  (ring.cleared_neighbors||[]).forEach((c,i) => {
+    edges.push({id:'ce'+i, from:c.connected_to, to:c.id, color:{color:'rgba(102,115,139,.22)'}, width:1, dashes:[2,3]});
+  });
+
+  visNodesDS = new vis.DataSet(nodes);
+  visEdgesDS = new vis.DataSet(edges);
+  const container = document.getElementById('graph');
+  const options = {
+    physics:{solver:'forceAtlas2Based', forceAtlas2Based:{gravitationalConstant:-55,springLength:95,springConstant:0.07,damping:0.42},
+      stabilization:{iterations:130}},
+    interaction:{hover:true, tooltipDelay:80},
+    nodes:{shape:'dot', borderWidth:3, shadow:{enabled:true, size:12, x:0, y:0}},
+    edges:{smooth:{type:'continuous'}},
+  };
+  if(network) network.destroy();
+  network = new vis.Network(container, {nodes:visNodesDS, edges:visEdgesDS}, options);
+  network.once('stabilizationIterationsDone', ()=> { if(!liveGraphGrowing) network.setOptions({physics:false}); });
+  network.on('click', (params) => {
+    if(params.nodes.length > 0) openAccountModal(params.nodes[0]);
+  });
+  } catch(err) {
+    console.error('Graph render failed:', err);
+    document.getElementById('graph').innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-low);font-size:13px;">Network graph unavailable — visualization library failed to load.</div>';
+  }
+}
+
+/* ---------------- RING HEADER ---------------- */
+function renderRingHeader(ring){
+  const isCustom = !ring.ring_id;
+  const hasKnownRisk = !isCustom || ring.risk_label;   // custom mode starts with no known risk until investigation concludes
+  const badgeClass = hasKnownRisk ? riskBadge(ring) : null;
+  const riskBadgeHtml = hasKnownRisk
+    ? `<span class="rh-badge ${badgeClass}">${ring.risk_label} RISK</span>`
+    : `<span class="rh-badge" style="background:var(--panel-hover);color:var(--text-mid);border:1px solid var(--hairline-bright);">RISK UNKNOWN — INVESTIGATING</span>`;
+  const actionTag = (ring.action_status && ring.action_status !== 'pending')
+    ? `<span class="rh-badge" style="background:var(--panel-hover);color:var(--text-mid);border-color:var(--hairline-bright);">${ACTION_LABEL[ring.action_status]}</span>` : '';
+  const actionsHtml = isCustom
+    ? ``
+    : `<button class="btn ghost" id="exportBtn">Export</button>
+       <button class="btn ghost" id="ringIntelBtn">Ring Intelligence</button>
+       <button class="btn ghost" id="dismissBtn">Dismiss</button>
+       <button class="btn" id="watchBtn">Place on Watch</button>
+       <button class="btn primary" id="escalateBtn">Escalate Ring</button>`;
+
+  // AI-vs-analyst comparison — only shown once a decision has actually been taken
+  const decisionCompareHtml = (!isCustom && ring.analyst_decision) ? `
+    <div style="display:flex;gap:16px;padding:8px 0 2px 0;font-size:11.5px;font-family:'IBM Plex Mono',monospace;">
+      <span style="color:var(--text-low);">AI RECOMMENDED: <span style="color:var(--text-mid);font-weight:600;">${ring.ai_verdict.toUpperCase()}</span></span>
+      <span style="color:var(--text-low);">ANALYST DECIDED: <span style="color:var(--text-hi);font-weight:600;">${ring.analyst_decision.toUpperCase()}</span></span>
+      ${ring.overridden ? '<span style="color:var(--medium);font-weight:700;">OVERRIDE</span>' : '<span style="color:var(--text-mid);">AGREED</span>'}
+    </div>` : '';
+
+  document.getElementById('ring-header').innerHTML = `
+    <div class="rh-top">
+      <div>
+        <span class="rh-id display">${isCustom ? ('Custom: '+ring.internal_seeds[0]) : ring.ring_id}${riskBadgeHtml}${actionTag}</span>
+      </div>
+      <div class="rh-actions">${actionsHtml}</div>
+    </div>
+    <div class="rh-stats">
+      <div class="rh-stat"><div class="n">${ring.account_count}</div><div class="l">Accounts</div></div>
+      <div class="rh-stat"><div class="n">₹${ring.exposure_inr.toLocaleString(undefined,{maximumFractionDigits:0})}</div><div class="l">Exposure</div></div>
+      <div class="rh-stat"><div class="n">${(ring.confidence*100).toFixed(0)}%</div><div class="l">Confidence</div></div>
+    </div>
+    ${decisionCompareHtml}
+  `;
+  if(!isCustom){
+    document.getElementById('escalateBtn').onclick = () => actOnRing(ring.ring_id, 'escalate', 'escalateBtn');
+    document.getElementById('watchBtn').onclick = () => actOnRing(ring.ring_id, 'watch', 'watchBtn');
+    document.getElementById('dismissBtn').onclick = () => actOnRing(ring.ring_id, 'dismiss', 'dismissBtn');
+    document.getElementById('ringIntelBtn').onclick = () => openRingIntelligence(ring.ring_id);
+    document.getElementById('exportBtn').onclick = () => exportRingReport(ring.ring_id);
+  }
+}
+
+async function exportRingReport(ringId){
+  const btn = document.getElementById('exportBtn');
+  const original = btn.textContent;
+  btn.textContent = 'Exporting…'; btn.disabled = true;
+  try {
+    const res = await fetchJSON(`/api/rings/${ringId}/export`);
+    const data = await res.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${ringId}_audit_report.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch(err){ console.error('Export failed', err); }
+  btn.textContent = original; btn.disabled = false;
+}
+
+/* REAL action: POSTs to the backend, persists, and updates the UI from
+   the server's actual response — not a cosmetic timeout. */
+async function actOnRing(ringId, action, btnId){
+  const btn = document.getElementById(btnId);
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const res = await fetchJSON(`/api/rings/${ringId}/action`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({action})
+    });
+    const data = await res.json();
+    const label = {escalate:'Escalated ✓', watch:'On watch ✓', dismiss:'Dismissed ✓'}[action];
+    btn.textContent = label;
+    const ringRef = ALL_RINGS.find(r => r.ring_id === ringId);
+    if(ringRef) ringRef.action_status = data.status;
+    renderQueue();
+    refreshModelHealth();   // override rate may have changed — update badge/banner immediately
+    if(currentRingId === ringId){
+      const fresh = await (await fetchJSON(`/api/rings/${ringId}`)).json();
+      renderRingHeader(fresh);
+      return;
+    }
+  } catch(err){
+    btn.textContent = 'Failed — retry';
+  }
+  setTimeout(()=>{ btn.disabled = false; }, 1200);
+}
+
+/* ---------------- TIMELINE ---------------- */
+function renderTimeline(ring){
+  const strip = document.getElementById('timeline-strip');
+  strip.innerHTML = ring.timeline.map(t => `
+    <div class="tl-item">
+      <span class="tl-time mono">${t.time}</span>
+      <span class="tl-title">${t.title}</span>
+      <span class="tl-sub">${t.subtitle}</span>
+    </div>
+  `).join('');
+}
+
+/* ---------------- AGENT STREAM (LIVE — real Server-Sent Events) ---------------- */
+let liveSource = null;
+let liveEventCount = 0;
+let liveRunning = false;
+
+const EVENT_KIND = {
+  trigger: 'start', investigate: 'progress', investigate_promoted: 'evidence',
+  investigate_not_promoted: 'cleared', relationship_found: 'evidence',
+  early_exit: 'update', final: 'final', error: 'cleared',
+  reasoner_mode: 'update', tool_call: 'progress', tool_result: 'evidence', reasoning: 'update',
+};
+
+function hideAgentPanel(){
+  document.getElementById('agent-col').style.display = 'none';
+  document.getElementById('main-grid').style.gridTemplateColumns = '280px 1fr';
+}
+function showAgentPanel(){
+  document.getElementById('agent-col').style.display = 'flex';
+  document.getElementById('main-grid').style.gridTemplateColumns = '280px 1fr 340px';
+}
+
+function idleStreamMessage(){
+  hideAgentPanel();
+  document.getElementById('agent-stream').innerHTML =
+    `<div style="padding:30px 8px;color:var(--text-low);font-size:12.5px;line-height:1.6;text-align:center;">
+      No investigation running yet.<br>Click <strong style="color:var(--text-mid);">Run Live Investigation</strong>
+      to have the agent investigate this ring's seed account in real time — every step below will be computed
+      by the backend as it happens, not replayed from a stored file.
+    </div>`;
+  document.getElementById('verdict-container').innerHTML = '';
+  document.getElementById('progress-fill').style.width = '0%';
+  document.getElementById('step-label').textContent = '';
+}
+
+function boldKeyDetails(text){
+  if(!text) return text;
+  // Bold the important, scannable facts in a log line: account IDs, claim
+  // counts, and "shared with N other account(s)" phrases.
+  return text
+    .replace(/\b(ACC\d+)\b/g, '<strong>$1</strong>')
+    .replace(/\b(\d+)\s+claim\(s\)/gi, '<strong>$1 claim(s)</strong>')
+    .replace(/\bshared with\s+(\d+)\s+other\s+account\(s\)/gi, 'shared with <strong>$1 other account(s)</strong>')
+    .replace(/\brisk score\s+(\d+%)/gi, 'risk score <strong>$1</strong>')
+    .replace(/(\d+)\s+account\(s\)/gi, '<strong>$1 account(s)</strong>');
+}
+
+function appendLiveStreamEntry(step){
+  const stream = document.getElementById('agent-stream');
+  if(liveEventCount === 0) stream.innerHTML = '';
+  const kind = EVENT_KIND[step.type] || 'progress';
+  const el = document.createElement('div');
+  el.className = 'stream-entry seen current kind-' + kind;
+  const timing = (step.compute_ms !== undefined && step.compute_ms !== null)
+    ? `<span style="color:var(--text-low);font-size:10px;"> · computed in ${step.compute_ms}ms</span>` : '';
+  el.innerHTML = `<div class="icon-dot"></div><div class="se-title">${step.title||''}</div><div class="se-sub">${boldKeyDetails(step.subtitle)||''}${timing}</div>`;
+  document.querySelectorAll('.stream-entry.current').forEach(e=>e.classList.remove('current'));
+  stream.appendChild(el);
+  el.classList.add('current');
+  el.scrollIntoView({block:'nearest', behavior:'smooth'});
+  liveEventCount++;
+  document.getElementById('agent-count').textContent = liveEventCount + ' events';
+  document.getElementById('step-label').textContent = `${liveEventCount} events (live)`;
+  document.getElementById('progress-fill').style.width = liveRunning ? '60%' : '100%';
+}
+
+function riskToColor(pct){
+  // low < 50% = yellow, medium 50-89% = orange, high >= 90% = red.
+  const p = Math.max(0, Math.min(100, Number(pct) || 0));
+  if(p >= 90) return '#FF5C67';
+  if(p >= 50) return '#FFB84D';
+  return '#FFD45A';
+}
+
+/* highlightLiveStep — FIXED. The previous version only colored a node
+   when it could parse an explicit "risk score N%" out of the subtitle,
+   and reset everything else to the SAME grey used for untouched nodes —
+   so most events (e.g. "relationship_examined" lines, which carry no
+   risk-score phrase) never visibly changed anything. Every touched node
+   now gets a real color: yellow by default the moment it's touched,
+   shifting toward orange/red as soon as an actual risk score is known. */
+function highlightLiveStep(step){
+  if(!visNodesDS || !step.account_id) return;
+  const id = step.account_id;
+
+  let color = '#FFD45A';   // default: touched, risk not yet specifically known
+  const riskMatch = (step.subtitle||'').match(/risk score\s+(\d+)%/i);
+  if(step.type === 'final'){
+    color = riskToColor((step.confidence||0)*100);
+  } else if(riskMatch){
+    color = riskToColor(parseInt(riskMatch[1], 10));
+  } else if(step.type === 'investigate_not_promoted'){
+    color = '#66738B';   // cleared / not linked — neutral grey, not risk-colored
+  }
+
+  if(!visNodesDS.get(id)){
+    visNodesDS.add({id, label: id.replace('ACC',''), color:{background:'rgba(0,0,0,.4)', border:color},
+      font:{color:'#9AA7BE', size:10, face:'IBM Plex Mono'}, size: step.type==='final'?17:14, borderWidth:2.5,
+      shadow:{enabled:true, color:color, size:14, x:0, y:0}});
+  } else {
+    visNodesDS.update({id, color:{background:'rgba(0,0,0,.4)', border:color}, size: step.type==='final'?17:14,
+      shadow:{enabled:true, color:color, size:14, x:0, y:0}});
+  }
+
+  // Edge creation: uses the REAL "parent" field the backend actually
+  // sends on relationship_found events — no fragile text-scraping needed.
+  if(step.parent && visEdgesDS){
+    const edgeId = [step.parent, id].sort().join('__');
+    if(!visEdgesDS.get(edgeId)){
+      let relColor = 'rgba(154,167,190,.35)';
+      const sub = (step.subtitle||'').toLowerCase();
+      if(sub.includes('routes')) relColor = 'rgba(255,184,77,.5)';
+      else if(sub.includes('referred')) relColor = 'rgba(94,231,255,.4)';
+      else if(sub.includes('synchronized')) relColor = 'rgba(255,92,103,.4)';
+      visEdgesDS.add({id: edgeId, from: step.parent, to: id, color:{color: relColor}, width: 1.6});
+    }
+  }
+}
+
+function showLiveVerdict(step, ring){
+  const actionBtn = ring.ring_id
+    ? `<button class="btn primary" id="verdictEscalate">Escalate Ring</button>`
+    : `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--hairline);text-align:left;">
+        <div style="font-size:11px;color:var(--text-low);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Ad-Hoc Investigation — Not Saved as a Ring</div>
+        <div style="font-size:12px;color:var(--text-mid);margin-bottom:10px;">This was a one-off lookup on an account you entered directly, not one of the saved rings in the queue — so there's no Escalate/Watch/Dismiss action here.</div>
+        <div style="font-size:11px;color:var(--text-low);margin-bottom:4px;">Accounts identified (${step.cluster_members.length})</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-mid);line-height:1.6;">${step.cluster_members.join(', ')}</div>
+      </div>`;
+  document.getElementById('verdict-container').innerHTML = `
+    <div class="verdict-box ${step.verdict === 'ESCALATE' && step.confidence > 0.9 ? 'high-confidence' : ''}">
+      <div class="vb-label">${step.verdict} — LIVE RESULT</div>
+      <div class="vb-conf">${(step.confidence*100).toFixed(0)}%</div>
+      <div class="vb-desc">${step.cluster_size} account(s) · ₹${step.exposure_inr.toLocaleString(undefined,{maximumFractionDigits:0})} exposure · computed just now (${step.total_compute_ms}ms total)</div>
+      ${actionBtn}
+    </div>
+  `;
+  if(ring.ring_id){
+    document.getElementById('verdictEscalate').onclick = () => actOnRing(ring.ring_id, 'escalate', 'verdictEscalate');
+  } else {
+    const statEls = document.querySelectorAll('.rh-stats .rh-stat .n');
+    if(statEls[0]) statEls[0].textContent = step.cluster_size;
+    if(statEls[1]) statEls[1].textContent = '₹' + step.exposure_inr.toLocaleString(undefined,{maximumFractionDigits:0});
+    if(statEls[2]) statEls[2].textContent = (step.confidence*100).toFixed(0) + '%';
+    const verdictBadgeClass = {ESCALATE:'high', WATCH:'medium', DISMISS:'low'}[step.verdict] || 'low';
+    const verdictBadgeLabel = {ESCALATE:'HIGH RISK', WATCH:'MEDIUM RISK', DISMISS:'LOW RISK'}[step.verdict] || 'LOW RISK';
+    const badgeEl = document.querySelector('.rh-id .rh-badge');
+    if(badgeEl){
+      badgeEl.className = 'rh-badge ' + verdictBadgeClass;
+      badgeEl.textContent = verdictBadgeLabel;
+      badgeEl.style = '';
+    }
+  }
+}
+
+function stopLiveInvestigation(){
+  if(liveSource){ liveSource.close(); liveSource = null; }
+  liveRunning = false;
+  const btn = document.getElementById('replayBtn');
+  btn.textContent = '▶ Run Live Investigation'; btn.classList.remove('playing');
+}
+
+function startLiveInvestigation(ring){
+  stopLiveInvestigation();
+  showAgentPanel();
+  if(visNodesDS){
+    ring.nodes.forEach(n => visNodesDS.update({id:n.id, color:{background:GRAPH_NEUTRAL_NODE_BG,border:GRAPH_NEUTRAL_NODE_BORDER}, size:11}));
+  }
+  liveEventCount = 0;
+  liveRunning = true;
+  document.getElementById('agent-stream').innerHTML = '';
+  document.getElementById('verdict-container').innerHTML = '';
+  document.getElementById('progress-fill').style.width = '8%';
+
+  // Seed = this ring's actual highest-risk member (the real account that
+  // originally triggered this investigation), not an arbitrary pick.
+  const seedId = (ring.internal_seeds && ring.internal_seeds[0]) ||
+                 ring.nodes.reduce((a,b) => (b.risk_score > a.risk_score ? b : a), ring.nodes[0]).id;
+
+  const btn = document.getElementById('replayBtn');
+  btn.textContent = '⏸ Investigating…'; btn.classList.add('playing');
+
+  liveSource = new EventSource(`/api/investigate/${seedId}/stream?delay=0.9`);
+  liveSource.onmessage = (msg) => {
+    const step = JSON.parse(msg.data);
+    appendLiveStreamEntry(step);
+    highlightLiveStep(step);
+    if(step.type === 'final'){
+      showLiveVerdict(step, ring);
+      stopLiveInvestigation();
+    }
+  };
+  liveSource.onerror = () => { stopLiveInvestigation(); };
+}
+
+/* ---------------- LOAD RING (live fetch) ---------------- */
+async function loadRing(ringId){
+  currentRingId = ringId;
+  liveGraphGrowing = false;
+  stopLiveInvestigation();
+  renderQueue();
+  const res = await fetchJSON(`/api/rings/${ringId}`);
+  if(!res.ok){ console.error('Failed to load ring', ringId); return; }
+  const ring = await res.json();
+
+  renderRingHeader(ring);
+  renderTimeline(ring);
+  idleStreamMessage();
+  document.getElementById('agent-count').textContent = '';
+  buildGraph(ring);
+
+  const replayBtn = document.getElementById('replayBtn');
+  replayBtn.onclick = () => {
+    if(liveRunning){ stopLiveInvestigation(); }
+    else { startLiveInvestigation(ring); }
+  };
+}
+
+/* ---------------- ACCOUNT MODAL (live fetch) ---------------- */
+async function openAccountModal(accountId){
+  const modal = document.getElementById('account-modal');
+  modal.innerHTML = `<div class="modal-body" style="text-align:center;color:var(--text-low);padding:40px;">Loading…</div>`;
+  document.getElementById('modal-overlay').classList.add('open');
+
+  const res = await fetchJSON(`/api/accounts/${accountId}`);
+  if(!res.ok){
+    modal.innerHTML = `
+      <div class="modal-head">
+        <div><div class="mid mono">${accountId}</div><h2>Cleared Account</h2></div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="color:var(--text-mid);font-size:13px;line-height:1.6;">
+          This account was investigated because it connected to a flagged account,
+          but independent review found insufficient evidence to link it to the ring.
+          Connection alone is never treated as guilt.
+        </p>
+      </div>`;
+    return;
+  }
+  const detail = await res.json();
+  const evidenceHtml = detail.evidence.length ? detail.evidence.map(e => `
+    <div class="evidence-row">
+      <div class="ev-left">${e.icon} ${e.label}</div>
+      <div class="ev-strength ${e.strength}">${e.strength}</div>
+    </div>
+  `).join('') : '<div class="empty-cleared">No independent evidence on file.</div>';
+
+  modal.innerHTML = `
+    <div class="modal-head">
+      <div><div class="mid mono">ACCOUNT</div><h2>${detail.account_id}</h2></div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="risk-ring">
+        <div class="risk-ring-num">${(detail.risk_score*100).toFixed(0)}%</div>
+        <div><div class="risk-ring-label">Risk Score</div><div class="status-chip">${detail.status}</div></div>
+      </div>
+      <div>${evidenceHtml}</div>
+      <div class="assessment-box"><div class="al">Agent Assessment</div>"${detail.assessment}"</div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal()">View Ring</button>
+        <button class="btn" onclick="closeModal()">Watch</button>
+        <button class="btn primary" onclick="closeModal()">Escalate</button>
+      </div>
+    </div>
+  `;
+}
+/* ---------------- RING INTELLIGENCE (deterministic explanation layer) ---------------- */
+const RI_LOADING_STEPS = ["Building account blueprints\u2026", "Aggregating ring evidence\u2026", "Generating investigation summary\u2026"];
+
+function openRiModal(){ document.getElementById('ri-modal-overlay').style.display = 'flex'; }
+function closeRiModal(){ document.getElementById('ri-modal-overlay').style.display = 'none'; }
+document.getElementById('ri-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'ri-modal-overlay') closeRiModal();
+});
+
+async function openRingIntelligence(ringId){
+  const modal = document.getElementById('ri-modal');
+  let stepIdx = 0;
+  modal.innerHTML = `
+    <div class="ri-head">
+      <div><div class="ri-eyebrow">Ring Intelligence</div><h2>Why was this group flagged?</h2></div>
+      <button class="modal-close" onclick="closeRiModal()">\u2715</button>
+    </div>
+    <div class="ri-loading">
+      <div class="spinner"></div>
+      <div class="step-text" id="ri-step-text">${RI_LOADING_STEPS[0]}</div>
+    </div>
+  `;
+  openRiModal();
+
+  const stepTimer = setInterval(()=>{
+    stepIdx = Math.min(stepIdx+1, RI_LOADING_STEPS.length-1);
+    const el = document.getElementById('ri-step-text');
+    if(el) el.textContent = RI_LOADING_STEPS[stepIdx];
+  }, 550);
+
+  let report;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
+    const res = await fetchJSON(`/api/rings/${ringId}/intelligence`, {signal: controller.signal});
+    clearTimeout(timeoutId);
+    if(!res.ok) throw new Error('request failed');
+    report = await res.json();
+  } catch(err) {
+    clearInterval(stepTimer);
+    modal.innerHTML = `
+      <div class="ri-head">
+        <div><div class="ri-eyebrow">Ring Intelligence</div><h2>Unavailable</h2></div>
+        <button class="modal-close" onclick="closeRiModal()">\u2715</button>
+      </div>
+      <div class="ri-body"><p style="color:var(--text-mid);font-size:13px;">
+        Could not generate the intelligence report for this ring. The underlying investigation
+        result is unaffected — this only affects the explanation layer.</p></div>`;
+    return;
+  }
+  clearInterval(stepTimer);
+  await new Promise(r => setTimeout(r, 300));
+  renderRingIntelligence(ringId, report);
+}
+
+function renderRingIntelligence(ringId, report){
+  const modal = document.getElementById('ri-modal');
+
+  let sourceTag;
+  if(report.generated_by && (report.generated_by.startsWith('groq_llm') || report.generated_by.startsWith('ollama_llm'))){
+    const [provider, model] = report.generated_by.split(':')[0] === 'groq_llm'
+      ? ['Groq (cloud)', report.generated_by.split(':')[1]]
+      : ['Ollama (local)', report.generated_by.split(':')[1]];
+    sourceTag = `Generated by: LLM \u2014 ${model}, ${provider} \u2014 ${report.llm_latency_ms||'?'}ms \u2014 explanation only, detection result is unchanged`;
+  } else {
+    const reason = report.llm_attempted ? ` \u2014 LLM was attempted but unavailable (${report.llm_status||'unknown reason'})` : '';
+    sourceTag = `Generated by: Deterministic Evidence Synthesis (no LLM used \u2014 template-based over real pipeline output)${reason}`;
+  }
+
+  const strongestHtml = report.strongest_evidence.map(s => {
+    const n = s.match(/^\d+/);
+    return `<div class="ri-evidence-line"><span class="n">${n?n[0]:''}</span><span>${s.replace(/^\d+\s*account\(s\)\s*/,'')}</span></div>`;
+  }).join('') || '<div class="ri-evidence-line" style="color:var(--text-low);">No strong evidence found.</div>';
+
+  const supportingHtml = report.supporting_evidence.map(s => {
+    const n = s.match(/^\d+/);
+    return `<div class="ri-evidence-line"><span class="n" style="color:var(--watch);">${n?n[0]:''}</span><span>${s.replace(/^\d+\s*account\(s\)\s*/,'')}</span></div>`;
+  }).join('');
+
+  const accountCardsHtml = report.account_assessments.map(a => `
+    <div class="ri-account-card">
+      <div class="ac-id"><span>${a.account_id}</span><span class="ac-conf ${a.confidence}">${a.confidence}</span></div>
+      <div class="ac-role">${a.role_in_ring}</div>
+      <div class="ac-evidence">${a.evidence_summary}</div>
+    </div>
+  `).join('');
+
+  const weakestHtml = report.weakest_member ? `
+    <div class="ri-section">
+      <div class="ri-label">Weakest Member</div>
+      <div class="ri-weakest-box">
+        <div class="w-id">${report.weakest_member.account_id}</div>
+        ${report.weakest_member.reason}
+      </div>
+    </div>` : '';
+
+  const actionLabel = {escalate:'ESCALATE', watch:'WATCH', dismiss:'DISMISS'}[report.recommended_action] || report.recommended_action.toUpperCase();
+  const actionColor = report.recommended_action === 'escalate' ? 'var(--risk)' : 'var(--watch)';
+
+  modal.innerHTML = `
+    <div class="ri-head">
+      <div><div class="ri-eyebrow">Ring Intelligence \u2014 ${ringId}</div><h2>Why was this group flagged?</h2></div>
+      <button class="modal-close" onclick="closeRiModal()">\u2715</button>
+    </div>
+    <div class="ri-body">
+      <div class="ri-section">
+        <div class="ri-label">Primary Pattern</div>
+        <span class="ri-pattern-badge">${report.primary_pattern}</span>
+      </div>
+
+      <div class="ri-section">
+        <div class="ri-label">Strongest Evidence</div>
+        ${strongestHtml}
+      </div>
+
+      ${supportingHtml ? `<div class="ri-section"><div class="ri-label">Supporting Evidence</div>${supportingHtml}</div>` : ''}
+
+      <div class="ri-section">
+        <div class="ri-label">Account Breakdown</div>
+        <div class="ri-accounts-grid">${accountCardsHtml}</div>
+      </div>
+
+      ${weakestHtml}
+
+      <div class="ri-section">
+        <div class="ri-label">Agent Assessment</div>
+        <div class="ri-summary-text">${report.analyst_summary}</div>
+      </div>
+
+      <div class="ri-section" style="margin-bottom:0;">
+        <div class="ri-action-row">
+          <div>
+            <div class="ri-label" style="margin-bottom:4px;">Recommended Action</div>
+            <span class="ri-pattern-badge" style="background:transparent;border-color:${actionColor};color:${actionColor};">${actionLabel}</span>
+          </div>
+          <button class="btn primary" onclick="actOnRing('${ringId}','${report.recommended_action}','ringIntelBtn'); closeRiModal();">
+            Apply: ${actionLabel} Ring
+          </button>
+        </div>
+        <div class="ri-source-tag">${sourceTag}</div>
+      </div>
+    </div>
+  `;
+}
+
+
+document.getElementById('modal-overlay').addEventListener('click', (e)=>{ if(e.target.id === 'modal-overlay') closeModal(); });
+document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') closeModal(); if(e.key === 'Escape') closeRiModal(); });
+function closeModal(){ document.getElementById('modal-overlay').classList.remove('open'); }
+
+/* ---------------- INIT ---------------- */
+document.getElementById('sortSelect').addEventListener('change', (e)=>{
+  sortMode = e.target.value;
+  renderQueue();
+});
+
+/* ---------------- CUSTOM (FROM-SCRATCH) INVESTIGATION ---------------- */
+document.getElementById('customInvestigateBtn').onclick = () => {
+  const input = document.getElementById('customAccountInput');
+  const errEl = document.getElementById('customInvestigateError');
+  const accountId = input.value.trim().toUpperCase();
+  errEl.style.display = 'none';
+  if(!accountId){
+    errEl.textContent = 'Enter an account ID.'; errEl.style.display = 'block'; return;
+  }
+  startCustomInvestigation(accountId);
+};
+document.getElementById('customAccountInput').addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter') document.getElementById('customInvestigateBtn').click();
+});
+
+function startCustomInvestigation(accountId){
+  currentRingId = null;
+  liveGraphGrowing = true;
+  renderQueue();
+
+  const syntheticRing = {
+    ring_id: null, internal_seeds: [accountId],
+    nodes: [{id: accountId, risk_score: 0, status: 'pending', claim_count: 0, total_claimed: 0}],
+    edges: [], cleared_neighbors: [], timeline: [], activity_stream: [],
+    account_count: 1, exposure_inr: 0, confidence: 0, risk_label: null,
+  };
+
+  renderRingHeader(syntheticRing);
+  renderTimeline(syntheticRing);
+  idleStreamMessage();
+  buildGraph(syntheticRing);
+
+  const replayBtn = document.getElementById('replayBtn');
+  replayBtn.onclick = () => {
+    if(liveRunning){ stopLiveInvestigation(); }
+    else { startLiveInvestigation(syntheticRing); }
+  };
+  startLiveInvestigation(syntheticRing);
+}
+
+/* ---------------- LANDING SCREEN ---------------- */
+function countUp(el, target, formatter, duration=1200){
+  const start = performance.now();
+  function tick(now){
+    const p = Math.min((now-start)/duration, 1);
+    const eased = 1 - Math.pow(1-p, 3);
+    el.textContent = formatter(target*eased);
+    if(p < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+async function initLanding(){
+  try {
+    const res = await fetchJSON('/api/stats');
+    const stats = await res.json();
+    countUp(document.getElementById('lgm-accounts'), stats.total_accounts, v => Math.round(v).toLocaleString());
+    countUp(document.getElementById('lgm-rings'), stats.total_rings, v => Math.round(v).toLocaleString());
+    countUp(document.getElementById('lgm-active'), stats.active_investigations, v => Math.round(v).toLocaleString());
+    countUp(document.getElementById('lgm-exposure'), stats.total_exposure_inr, v => '\u20b9'+Math.round(v).toLocaleString());
+    const statusCount = document.getElementById('lg-status-count');
+    if(statusCount) statusCount.textContent = stats.active_investigations.toLocaleString();
+  } catch(err){ console.error('Landing stats fetch failed', err); }
+}
+
+document.getElementById('lg-enter-btn').onclick = () => {
+  document.getElementById('landing').classList.add('hidden');
+  document.getElementById('app-nav').style.display = 'flex';
+  document.body.classList.add('app-active');
+};
+
+/* ---------------- MULTI-PAGE NAV ---------------- */
+document.querySelectorAll('#app-nav .nav-btn').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById(btn.dataset.page).classList.add('active');
+    document.querySelectorAll('#app-nav .nav-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    if(btn.dataset.page === 'page-model-health') loadModelHealthPage();
+    if(btn.dataset.page === 'page-audit') loadAuditPage();
+  };
+});
+
+document.getElementById('app-nav-toggle').onclick = () => {
+  const nav = document.getElementById('app-nav');
+  const collapsed = nav.classList.toggle('collapsed');
+  document.body.classList.toggle('nav-collapsed', collapsed);
+  document.getElementById('app-nav-toggle').innerHTML = collapsed ? '&#187;' : '&#171; Collapse';
+};
+
+/* ---------------- RISK API PAGE ---------------- */
+document.getElementById('riskApiSubmit').onclick = async () => {
+  const accountId = document.getElementById('riskApiAccountId').value.trim().toUpperCase();
+  const txnId = document.getElementById('riskApiTxnId').value.trim();
+  const amount = document.getElementById('riskApiAmount').value;
+  const resultEl = document.getElementById('riskApiResult');
+  if(!accountId){ resultEl.innerHTML = '<div class="card-block" style="color:var(--risk);">Enter an account ID.</div>'; return; }
+  resultEl.innerHTML = '<div class="card-block">Evaluating\u2026</div>';
+  try {
+    const body = {account_id: accountId};
+    if(txnId) body.transaction_id = txnId;
+    if(amount) body.amount = parseFloat(amount);
+    const res = await fetchJSON('/api/risk/evaluate', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const data = await res.json();
+    if(!res.ok){
+      resultEl.innerHTML = `<div class="card-block" style="color:var(--risk);">${data.detail || 'Request failed'}</div>`;
+      return;
+    }
+    const reasonsHtml = data.reasons.map(r => `<div class="reason-line">${r}</div>`).join('');
+    const deviceHtml = data.device_sharing
+      ? `<div class="card-block"><h3>Device Sharing</h3><div class="reason-line">Fingerprint <strong>${data.device_sharing.device_fingerprint}</strong> shared with: ${data.device_sharing.co_linked_accounts.join(', ')}</div></div>`
+      : '';
+    resultEl.innerHTML = `
+      <div class="card-block">
+        <h3>Result</h3>
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
+          <span class="decision-badge ${data.decision}">${data.decision}</span>
+          <span style="font-family:'Space Grotesk',sans-serif;font-size:22px;font-weight:700;">${(data.risk_score*100).toFixed(1)}%</span>
+          <span style="color:var(--text-low);font-size:12px;">${data.risk_level} RISK</span>
+          ${data.ring_id ? `<span style="color:var(--text-mid);font-size:12px;">Ring: ${data.ring_id}</span>` : ''}
+        </div>
+        ${reasonsHtml}
+      </div>
+      ${deviceHtml}
+    `;
+  } catch(err){
+    resultEl.innerHTML = `<div class="card-block" style="color:var(--risk);">Request failed: ${err.message}</div>`;
+  }
+};
+
+/* ---------------- MODEL HEALTH PAGE ---------------- */
+async function loadModelHealthPage(){
+  try {
+    const [driftRes, feedbackRes] = await Promise.all([fetchJSON('/api/drift'), fetchJSON('/api/feedback-stats')]);
+    const drift = await driftRes.json();
+    const feedback = await feedbackRes.json();
+
+    const rsd = drift.risk_score_drift, emd = drift.evidence_mix_drift;
+    document.getElementById('driftDetail').innerHTML = `
+      <div class="trigger-row"><span>Risk-score PSI</span><span class="trigger-status ${rsd.severity==='none'?'ok':'firing'}">${rsd.psi} (${rsd.severity})</span></div>
+      <div class="trigger-row"><span>Evidence-mix PSI</span><span class="trigger-status ${emd.severity==='none'?'ok':'firing'}">${emd.psi} (${emd.severity})</span></div>
+      <div class="trigger-row"><span>Wasserstein distance</span><span style="color:var(--text-mid);">${rsd.wasserstein_distance}</span></div>
+      <div class="trigger-row"><span>KS statistic</span><span style="color:var(--text-mid);">${rsd.ks_statistic} (p=${rsd.ks_pvalue})</span></div>
+    `;
+
+    const t = feedback.triggers;
+    const TRIGGER_LABEL = {override_rate: 'Analyst override rate', performance_degradation: 'Escalate-verdict agreement',
+                            data_drift_psi: 'Data drift (PSI)', scheduled_interval: 'Scheduled interval'};
+    document.getElementById('triggerDetail').innerHTML = Object.entries(t).map(([k,v]) => `
+      <div class="trigger-row"><span>${TRIGGER_LABEL[k]}</span><span class="trigger-status ${v.firing?'firing':'ok'}">${v.firing?'FIRING':'ok'} — ${v.detail}</span></div>
+    `).join('');
+
+    const retrainBtn = document.getElementById('modelHealthRetrainBtn');
+    retrainBtn.style.display = feedback.retrain_recommended ? 'inline-flex' : 'none';
+    retrainBtn.onclick = async () => {
+      const status = document.getElementById('modelHealthRetrainStatus');
+      retrainBtn.disabled = true; retrainBtn.textContent = 'Retraining\u2026';
+      status.textContent = 'Refitting on analyst corrections\u2026';
+      try {
+        const res = await fetchJSON('/api/retrain', {method:'POST'});
+        const result = await res.json();
+        if(!res.ok) throw new Error(result.detail || 'retrain failed');
+        status.textContent = `\u2713 Done in ${result.elapsed_seconds}s — ${result.accounts_label_corrected} accounts corrected, ${result.accounts_flipped_verdict} verdicts shifted. Session-only.`;
+        await refreshModelHealth();
+        await loadModelHealthPage();
+      } catch(err){
+        status.textContent = 'Retrain failed: ' + err.message;
+      }
+      retrainBtn.disabled = false; retrainBtn.textContent = 'Retrain Model';
+    };
+  } catch(err){
+    document.getElementById('driftDetail').innerHTML = '<div style="color:var(--risk);">Failed to load drift data.</div>';
+  }
+}
+
+/* ---------------- AUDIT LOG PAGE ---------------- */
+async function loadAuditPage(){
+  const tbody = document.getElementById('auditTableBody');
+  try {
+    const res = await fetchJSON('/api/audit');
+    const data = await res.json();
+    document.getElementById('auditTotalDecisions').textContent = data.total_decisions;
+    document.getElementById('auditOverrideCount').textContent = data.overridden_decisions;
+
+    if(!data.entries.length){
+      tbody.innerHTML = '<tr><td colspan="6" style="padding:24px 16px;color:var(--text-low);text-align:center;">No decisions recorded yet this session. Escalate, watch, or dismiss a ring in Investigate to see it here.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.entries.map(e => `
+      <tr style="border-bottom:1px solid var(--hairline);">
+        <td style="padding:12px 16px;font-family:'IBM Plex Mono',monospace;font-weight:600;">${e.ring_id}</td>
+        <td style="padding:12px 16px;color:var(--text-mid);">${(e.ai_verdict||'').toUpperCase()}</td>
+        <td style="padding:12px 16px;color:var(--text-hi);">${(e.analyst_decision||'').toUpperCase()}</td>
+        <td style="padding:12px 16px;">${e.overridden
+            ? '<span class="trigger-status firing">OVERRIDE</span>'
+            : '<span class="trigger-status ok">AGREED</span>'}</td>
+        <td style="padding:12px 16px;color:var(--text-mid);">${e.exposure_inr!=null ? '\u20b9'+e.exposure_inr.toLocaleString(undefined,{maximumFractionDigits:0}) : '\u2014'}</td>
+        <td style="padding:12px 16px;color:var(--text-low);font-size:11.5px;">${e.updated_at ? new Date(e.updated_at).toLocaleString() : '\u2014'}</td>
+      </tr>
+    `).join('');
+  } catch(err){
+    tbody.innerHTML = `<tr><td colspan="6" style="padding:24px 16px;color:var(--risk);text-align:center;">Failed to load audit log: ${err.message}</td></tr>`;
+  }
+}
+
+/* ---------------- DEVICES PAGE ---------------- */
+document.getElementById('deviceLookupSubmit').onclick = async () => {
+  const fp = document.getElementById('deviceLookupInput').value.trim();
+  const resultEl = document.getElementById('deviceResult');
+  if(!fp){ resultEl.innerHTML = '<div class="card-block" style="color:var(--risk);">Enter a device fingerprint.</div>'; return; }
+  resultEl.innerHTML = '<div class="card-block">Looking up\u2026</div>';
+  try {
+    const res = await fetchJSON(`/api/devices/${encodeURIComponent(fp)}`);
+    const data = await res.json();
+    if(!res.ok){
+      resultEl.innerHTML = `<div class="card-block" style="color:var(--text-mid);">${data.detail || 'Not found'}</div>`;
+      return;
+    }
+    resultEl.innerHTML = `
+      <div class="card-block">
+        <h3>Device ${data.device_fingerprint}</h3>
+        <div class="metric-grid">
+          <div class="metric-tile"><div class="n">${data.connected_account_count}</div><div class="l">Connected Accounts</div></div>
+          <div class="metric-tile"><div class="n" style="color:var(--risk);">${data.high_risk_account_count}</div><div class="l">High Risk</div></div>
+          <div class="metric-tile"><div class="n">${data.known_rings.length}</div><div class="l">Known Rings</div></div>
+        </div>
+        <div style="margin-top:14px;font-size:12.5px;color:var(--text-mid);line-height:1.8;">
+          <strong>Accounts:</strong> ${data.connected_accounts.join(', ')}<br>
+          ${data.known_rings.length ? `<strong>Rings:</strong> ${data.known_rings.join(', ')}` : ''}
+        </div>
+      </div>
+    `;
+  } catch(err){
+    resultEl.innerHTML = `<div class="card-block" style="color:var(--risk);">Request failed: ${err.message}</div>`;
+  }
+};
+
+initLanding();
+init();
+</script>
+</body>
+</html>

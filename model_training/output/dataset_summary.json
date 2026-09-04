@@ -1,0 +1,21 @@
+{
+  "n_accounts_total": 19169,
+  "n_accounts_legit_individual": 16000,
+  "n_accounts_legit_community": 2102,
+  "n_accounts_ring": 1067,
+  "ring_types": {
+    "A_referral": 26,
+    "B_convergence": 24,
+    "C_proximity": 24,
+    "D_mixed": 24,
+    "E_adversarial": 24,
+    "F_sleeper": 20
+  },
+  "n_rings_total": 142,
+  "n_claims_total": 23878,
+  "total_claim_amount": 1110441.51,
+  "train_test_split_date": "2026-10-01",
+  "n_accounts_train": 14773,
+  "n_accounts_test": 4396,
+  "amount_source": "IEEE-CIS Kaggle real legit transactions (scaled for promo-claim realism)"
+}

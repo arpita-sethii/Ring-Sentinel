@@ -1,0 +1,30 @@
+{
+  "n_nodes": 19169,
+  "n_edges": {
+    "referral": 5008,
+    "convergence": 3850,
+    "tight_proximity": 1018,
+    "loose_proximity": 37404
+  },
+  "n_train_edges": {
+    "referral": 3442,
+    "convergence": 2924,
+    "tight_proximity": 946,
+    "loose_proximity": 31914
+  },
+  "learned_attention_layer1": {
+    "referral": 0.15215665102005005,
+    "convergence": 0.2651289701461792,
+    "tight_proximity": 0.11887477338314056,
+    "loose_proximity": 0.31815871596336365
+  },
+  "learned_attention_layer2": {
+    "referral": 0.3091053366661072,
+    "convergence": 0.292529433965683,
+    "tight_proximity": 0.11404120922088623,
+    "loose_proximity": 0.13396021723747253
+  },
+  "xgb_test_auc_roc": 0.9856,
+  "xgb_test_average_precision": 0.9286,
+  "final_train_loss": 0.1729
+}
