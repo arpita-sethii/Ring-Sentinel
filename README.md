@@ -18,6 +18,21 @@ Evaluated on a held-out test set, using the current 5-relation detection model:
 | **Recall** | 91.3% |
 | **Ring-level recall** | 99.3% |
 
+**False-positive cost**
+
+| | |
+|---|---|
+| False positives | 9 (out of 983 accounts escalated) |
+| Total accounts monitored | 19,169 |
+| Assumed cost per false-positive review* | ₹200 |
+| **Total false-positive cost** | **₹1,800** |
+| Exposure correctly identified | ₹128,418 |
+| **Return on review cost** | **~71×** — every ₹1 spent clearing a false positive corresponds to ₹71 of real fraud exposure caught |
+
+*Assumed analyst review cost per flagged case, used for planning purposes — not a measured operational figure, since this is a research benchmark, not a live deployment.*
+
+At 99.1% precision, false positives are rare enough that their total review cost is a small fraction of the fraud exposure the system correctly surfaces — the 9 flagged-in-error cases here are also confirmed to include **zero** accounts from the dataset's legitimate look-alike clusters (families, coworkers, shared households), meaning the false positives that do occur aren't concentrated in the cases that would be most damaging to flag wrongly.
+
 In production terms: **99 out of every 100 accounts flagged are genuinely part of a coordinated ring**, and the system catches **99.3% of actual fraud rings** in the dataset — with only a handful of false positives across the entire account base, none of them from accounts that only *look* related (family members, coworkers, shared households) but aren't actually committing fraud together.
 
 **The detection signal set:**
@@ -82,7 +97,7 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-
+Open **http://localhost:8000** — the backend serves both the API and the frontend from the same origin.
 
 ---
 
