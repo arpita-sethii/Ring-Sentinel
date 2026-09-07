@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ring Sentinel — Devices</title>
+<link rel="stylesheet" href="static/styles.css">
+</head>
+<body class="app-active">
+<nav id="app-nav"></nav>
+<div id="page-devices" class="dash-page">
+  <div class="subpage-wrap">
+    <div class="subpage-header">
+      <div class="eyebrow"><span class="dot"></span>Relationship Intelligence</div>
+      <h2>Entity Graph — Devices</h2>
+      <p>Look up a device fingerprint to see every account connected to it, how many are high-risk, and which confirmed rings they belong to.</p>
+    </div>
+    <div class="card-block">
+      <h3>Look Up a Device</h3>
+      <div class="field-row"><label>Device Fingerprint</label><input id="deviceLookupInput" placeholder="e.g. 32731509-81e"></div>
+      <button class="btn primary" id="deviceLookupSubmit">Look Up</button>
+    </div>
+    <div id="deviceResult"></div>
+  </div>
+</div>
+
+<script src="static/common.js"></script>
+<script>
+renderNav('devices.html');
+
+document.getElementById('deviceLookupSubmit').onclick = async () => {
+  const fp = document.getElementById('deviceLookupInput').value.trim();
+  const resultEl = document.getElementById('deviceResult');
+  if(!fp){ resultEl.innerHTML = '<div class="card-block" style="color:var(--risk);">Enter a device fingerprint.</div>'; return; }
+
+  const btn = document.getElementById('deviceLookupSubmit');
+  btn.disabled = true; btn.textContent = 'Looking up…';
+  try {
+    const res = await fetchJSON(`/api/devices/${encodeURIComponent(fp)}`);
+    const data = await res.json();
+    if(!res.ok){
+      resultEl.innerHTML = `<div class="card-block" style="color:var(--risk);">${data.detail || 'Not found'}</div>`;
+    } else {
+      resultEl.innerHTML = `
+        <div class="card-block">
+          <h3>Result</h3>
+          <div class="metric-grid">
+            <div class="metric-tile"><div class="n">${data.connected_account_count}</div><div class="l">Connected Accounts</div></div>
+            <div class="metric-tile"><div class="n" style="color:var(--risk);">${data.high_risk_account_count}</div><div class="l">High Risk</div></div>
+            <div class="metric-tile"><div class="n">${data.known_rings.length}</div><div class="l">Known Rings</div></div>
+          </div>
+          <div style="margin-top:16px;font-size:12.5px;color:var(--text-mid);line-height:1.8;">
+            <strong style="color:var(--text-hi);">Accounts:</strong> ${data.connected_accounts.join(', ')}
+            ${data.known_rings.length ? `<br><strong style="color:var(--text-hi);">Rings:</strong> ${data.known_rings.join(', ')}` : ''}
+          </div>
+        </div>`;
+    }
+  } catch(err){
+    resultEl.innerHTML = `<div class="card-block" style="color:var(--risk);">Request failed: ${err.message}</div>`;
+  }
+  btn.disabled = false; btn.textContent = 'Look Up';
+};
+</script>
+</body>
+</html>

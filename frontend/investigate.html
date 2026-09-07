@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ring Sentinel — Investigate</title>
+<script src="static/vis-network.min.js"></script>
+<link rel="stylesheet" href="static/styles.css">
+</head>
+<body class="app-active">
+<nav id="app-nav"></nav>
+<div id="page-investigation" class="investigate-page">
+
+  <header>
+    <div class="brand">
+      <span class="glyph">RS</span>
+      <h1 class="display">RING <span class="accent">SENTINEL</span></h1>
+      <span class="tagline"><span class="status-dot"></span> LIVE SYSTEM OPERATIONAL</span>
+    </div>
+    <div class="top-right">
+      <div class="status-pill" id="modelHealthBadge" style="cursor:pointer;"></div>
+      <div class="top-stats" id="top-stats"></div>
+    </div>
+  </header>
+  <div id="retrainBanner" style="display:none;background:var(--watch-dim);border-bottom:1px solid rgba(255,184,77,.35);
+      padding:10px 24px;font-size:12.5px;color:var(--watch);flex-direction:column;gap:2px;"></div>
+
+  <main id="main-grid">
+    <!-- LEFT: QUEUE -->
+    <section class="col">
+      <div class="col-head"><span class="title">Investigations</span><span class="count" id="queue-count"></span></div>
+      <div style="padding:12px 14px;border-bottom:1px solid var(--hairline);background:var(--panel);">
+        <div style="font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--active);font-weight:700;margin-bottom:8px;">
+          + New Investigation
+        </div>
+        <input id="customAccountInput" type="text" placeholder="Account ID, e.g. ACC018500"
+          style="width:100%;box-sizing:border-box;background:var(--panel-raised);border:1px solid var(--hairline-bright);
+            border-radius:7px;padding:8px 10px;color:var(--text-hi);font-family:'IBM Plex Mono',monospace;
+            font-size:12px;margin-bottom:8px;">
+        <button id="customInvestigateBtn" class="btn" style="width:100%;justify-content:center;font-size:12px;
+            background:var(--clear);border-color:var(--clear);color:#070A12;font-weight:700;">
+          Investigate from Scratch
+        </button>
+        <div id="customInvestigateError" style="color:var(--risk);font-size:11px;margin-top:6px;display:none;"></div>
+      </div>
+      <div style="padding:8px 14px;border-bottom:1px solid var(--hairline);">
+        <select id="sortSelect" style="width:100%;background:var(--panel-raised);border:1px solid var(--hairline-bright);
+            color:var(--text-hi);font-family:'IBM Plex Mono',monospace;font-size:11px;padding:7px 9px;border-radius:6px;">
+          <option value="recent">Most Recent</option>
+          <option value="risk-desc">Risk: High → Low</option>
+          <option value="risk-asc">Risk: Low → High</option>
+          <option value="exposure-desc">Exposure: High → Low</option>
+        </select>
+      </div>
+      <div id="queue-list"></div>
+    </section>
+
+    <!-- CENTER: GRAPH -->
+    <section class="col">
+      <div class="ring-header" id="ring-header"></div>
+      <div id="graph-wrap">
+        <div id="graph"></div>
+        <div class="replay-btn-wrap">
+          <button id="replayBtn">▶ Run Live Investigation</button>
+        </div>
+        <div class="legend">
+          <div class="li"><span class="ld" style="background:#66E3A4;box-shadow:0 0 6px #66E3A4;"></span>Low Risk</div>
+          <div class="li"><span class="ld" style="background:#FFB84D;box-shadow:0 0 6px #FFB84D;"></span>Medium Risk</div>
+          <div class="li"><span class="ld" style="background:#FF5C67;box-shadow:0 0 6px #FF5C67;"></span>High Risk</div>
+          <div class="li"><span class="ld" style="background:#66738B;"></span>Cleared / Inactive</div>
+        </div>
+      </div>
+      <div id="timeline-strip"></div>
+    </section>
+
+    <!-- RIGHT: AGENT -->
+    <section class="col" id="agent-col">
+      <div class="col-head"><span class="title">Agent Investigation Feed</span><span class="mono count" id="agent-count"></span></div>
+      <div id="agent-stream"></div>
+      <div id="verdict-container"></div>
+      <button class="view-log-btn" style="margin:0 16px 12px 16px;padding:9px;background:var(--panel-raised);
+          border:1px solid var(--hairline-bright);color:var(--text-mid);border-radius:7px;
+          font-family:'IBM Plex Mono',monospace;font-size:11px;cursor:pointer;"
+          onclick="document.getElementById('agent-stream').scrollTop=0;">View Full Activity Log</button>
+      <div id="agent-footer">
+        <span id="step-label" class="mono"></span>
+        <div id="progress-track"><div id="progress-fill"></div></div>
+      </div>
+    </section>
+  </main>
+
+</div>
+
+<div id="modal-overlay">
+  <div id="account-modal"></div>
+</div>
+
+<div id="ri-modal-overlay" style="position:fixed;inset:0;background:rgba(8,12,21,.72);backdrop-filter:blur(3px);
+    display:none;align-items:center;justify-content:center;z-index:110;">
+  <div id="ri-modal"></div>
+</div>
+
+<script src="static/common.js"></script>
+<script>
+
+let ALL_RINGS = [];
+let STATS = {};
+let currentRingId = null;
+
+/* ---------------- INIT ---------------- */
+async function init(){
+  const [statsRes, ringsRes] = await Promise.all([
+    fetchJSON('/api/stats'), fetchJSON('/api/rings')
+  ]);
+  if(ringsRes.status === 401){
+    // Session expired mid-use (e.g. a stale cached page reloaded after
+    // logging out elsewhere) — redirect cleanly instead of crashing on
+    // an error object where an array of rings was expected.
+    window.location.href = 'login.html';
+    return;
+  }
+  STATS = await statsRes.json();
+  ALL_RINGS = await ringsRes.json();
+
+  document.getElementById('top-stats').innerHTML = `
+    <div class="top-stat"><div class="l">Accounts</div><div class="n">${STATS.total_accounts.toLocaleString()}</div></div>
+    <div class="top-stat"><div class="l">Rings</div><div class="n">${STATS.total_rings}</div></div>
+    <div class="top-stat n-gold"><div class="l">Active</div><div class="n">${STATS.active_investigations.toLocaleString()}</div></div>
+    <div class="top-stat n-risk"><div class="l">Exposure</div><div class="n">₹${STATS.total_exposure_inr.toLocaleString(undefined,{maximumFractionDigits:0})}</div></div>
+  `;
+
+  document.getElementById('queue-count').textContent = ALL_RINGS.length;
+  renderQueue();
+  if(ALL_RINGS.length) loadRing(ALL_RINGS[0].ring_id);
+
+  refreshModelHealth();
+}
+
+async function refreshModelHealth(){
+  try {
+    const [driftRes, feedbackRes] = await Promise.all([fetchJSON('/api/drift'), fetchJSON('/api/feedback-stats')]);
+    const drift = await driftRes.json();
+    const feedback = await feedbackRes.json();
+
+    const sevColor = {none: 'var(--clear)', moderate: 'var(--watch)', severe: 'var(--risk)'};
+    const badge = document.getElementById('modelHealthBadge');
+    badge.innerHTML = `<span class="status-dot" style="background:${sevColor[drift.overall_severity]};animation:none;"></span> Model Health: ${drift.overall_severity === 'none' ? 'Stable' : drift.overall_severity.toUpperCase()+' DRIFT'}`;
+    badge.onclick = () => showModelHealthDetail(drift, feedback);
+
+    const banner = document.getElementById('retrainBanner');
+    if(feedback.retrain_recommended){
+      const TRIGGER_LABEL = {override_rate: 'analyst override rate', performance_degradation: 'escalate-verdict agreement',
+                              data_drift_psi: 'data drift', scheduled_interval: 'scheduled interval'};
+      const firedKeys = Object.entries(feedback.triggers).filter(([k,v]) => v.firing).map(([k]) => k);
+      const firedNames = firedKeys.map(k => TRIGGER_LABEL[k]).join(' and ');
+      const detail = Object.entries(feedback.triggers).filter(([k,v]) => v.firing)
+        .map(([k,v]) => v.detail).join(' · ');
+
+      // Be honest about what retraining will actually do here: it only
+      // refits on analyst overrides (Escalate/Watch/Dismiss decisions).
+      // If drift or the scheduled interval is the ONLY thing firing —
+      // zero analyst decisions yet — clicking Retrain has nothing to
+      // learn from and won't change the model's scores. Say that
+      // plainly instead of implying the button is a universal fix.
+      const onlyStructural = firedKeys.every(k => k === 'data_drift_psi' || k === 'scheduled_interval')
+                              && feedback.total_decisions === 0;
+      const explainer = onlyStructural
+        ? `No analyst decisions have been recorded yet, so retraining right now would have nothing to correct against — it would refit on the same data and likely return the same scores. Clicking Retrain will still acknowledge the current drift level, though, so this banner won't keep reappearing for the same unchanged number — it'll only come back if drift genuinely gets worse than this, or once analyst decisions start coming in.`
+        : `Retraining will refit the model using the ${feedback.overridden_decisions} analyst override(s) recorded so far as corrected labels.`;
+
+      banner.style.display = 'flex';
+      banner.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <strong>Retrain recommended</strong> — ${firedNames} triggered this (${detail}).
+          <button id="retrainNowBtn" class="btn primary" style="padding:3px 12px;font-size:11px;">Retrain Model</button>
+          <span id="retrainStatus" style="color:var(--text-low);"></span>
+        </div>
+        <div style="font-size:11px;color:var(--text-low);margin-top:4px;">${explainer}</div>
+      `;
+      document.getElementById('retrainNowBtn').onclick = runRetrain;
+    } else {
+      banner.style.display = 'none';
+    }
+  } catch(err){ console.error('Model health check failed', err); }
+}
+
+function showModelHealthDetail(drift, feedback){
+  const rsd = drift.risk_score_drift, emd = drift.evidence_mix_drift;
+  const t = feedback.triggers;
+  alert(
+    `MODEL HEALTH REPORT\n\n` +
+    `Risk score drift (train vs test):\n` +
+    `  PSI: ${rsd.psi}  (severity: ${rsd.severity})\n` +
+    `  Wasserstein: ${rsd.wasserstein_distance}\n` +
+    `  KL divergence: ${rsd.ks_statistic} (p=${rsd.ks_pvalue})\n\n` +
+    `Evidence-type mix drift (train vs test):\n` +
+    `  PSI: ${emd.psi}  (severity: ${emd.severity})\n\n` +
+    `RETRAIN TRIGGERS (any firing = retrain recommended):\n` +
+    `  1. Override rate: ${(t.override_rate.value*100).toFixed(1)}% (n=${t.override_rate.sample_size}, need >=${t.override_rate.min_sample_required}) — ${t.override_rate.firing?'FIRING':'ok'}\n` +
+    `  2. Escalate-agreement: ${(t.performance_degradation.value*100).toFixed(1)}% (n=${t.performance_degradation.sample_size}, need >=${t.performance_degradation.min_sample_required}) — ${t.performance_degradation.firing?'FIRING':'ok'}\n` +
+    `  3. Data drift PSI: ${t.data_drift_psi.value} — ${t.data_drift_psi.firing?'FIRING':'ok'}\n` +
+    `  4. Scheduled (${t.scheduled_interval.threshold}d): ${t.scheduled_interval.value}d elapsed — ${t.scheduled_interval.firing?'FIRING':'ok'}\n\n` +
+    `Last retrain: ${feedback.last_retrain_at ? new Date(feedback.last_retrain_at).toLocaleString() : 'never this session'}\n` +
+    `Retrain recommended: ${feedback.retrain_recommended ? 'YES' : 'no'}`
+  );
+}
+
+async function runRetrain(){
+  const btn = document.getElementById('retrainNowBtn');
+  const status = document.getElementById('retrainStatus');
+  btn.disabled = true; btn.textContent = 'Retraining\u2026';
+  status.textContent = 'Refitting on analyst corrections\u2026';
+  try {
+    const res = await fetchJSON('/api/retrain', {method: 'POST'});
+    const result = await res.json();
+    if(!res.ok){ throw new Error(result.detail || 'retrain failed'); }
+    status.textContent = `\u2713 Done in ${result.elapsed_seconds}s — ${result.accounts_label_corrected} accounts corrected from ${result.rings_used_for_correction} overridden ring(s), ${result.accounts_flipped_verdict} verdicts shifted. Session-only (not written to disk).`;
+    await refreshModelHealth();   // banner disappears since counters just reset
+  } catch(err){
+    status.textContent = 'Retrain failed: ' + err.message;
+    btn.disabled = false; btn.textContent = 'Retrain Model';
+  }
+}
+
+/* ---------------- QUEUE ---------------- */
+const queueList = document.getElementById('queue-list');
+function riskBadge(r){
+  if(r.risk_label === 'HIGH') return 'high';
+  if(r.risk_label === 'MEDIUM') return 'medium';
+  return 'low';
+}
+
+const ACTION_LABEL = {escalated:'ESCALATED', on_watch:'ON WATCH', dismissed:'DISMISSED'};
+
+let sortMode = 'recent';
+
+function sortedRings(){
+  const arr = [...ALL_RINGS];
+  if(sortMode === 'risk-desc') arr.sort((a,b) => b.confidence - a.confidence);
+  else if(sortMode === 'risk-asc') arr.sort((a,b) => a.confidence - b.confidence);
+  else if(sortMode === 'exposure-desc') arr.sort((a,b) => b.exposure_inr - a.exposure_inr);
+  return arr;   // 'recent' = server order, already the default
+}
+
+function renderQueue(){
+  queueList.innerHTML = '';
+  sortedRings().forEach(r => {
+    const el = document.createElement('div');
+    el.className = 'queue-item risk-' + riskBadge(r) + (r.ring_id === currentRingId ? ' active' : '');
+    const actionTag = (r.action_status && r.action_status !== 'pending')
+      ? `<span class="qi-badge" style="background:var(--panel-hover);color:var(--text-mid);margin-left:6px;">${ACTION_LABEL[r.action_status]}</span>` : '';
+    el.innerHTML = `
+      <div class="qi-top">
+        <span class="qi-id">${r.ring_id}</span>
+        <span>${actionTag}<span class="qi-badge ${riskBadge(r)}">${r.risk_label}</span></span>
+      </div>
+      <div class="qi-meta">
+        <span>${r.account_count} accounts</span>
+        <span>₹${r.exposure_inr.toLocaleString(undefined,{maximumFractionDigits:0})}</span>
+      </div>
+      <div class="qi-conf-bar"><div class="qi-conf-fill" style="width:${(r.confidence*100).toFixed(0)}%"></div></div>
+    `;
+    el.onclick = () => loadRing(r.ring_id);
+    queueList.appendChild(el);
+  });
+}
+
+/* ---------------- GRAPH SETUP ---------------- */
+let network = null;
+let liveGraphGrowing = false;   // true for custom (from-scratch) investigations — keeps physics on as nodes are added live
+let visNodesDS = null, visEdgesDS = null;
+
+const REL_COLOR = {
+  shared_payout: 'rgba(174,187,208,.35)',
+  referral: 'rgba(174,187,208,.35)',
+  coordinated_activity: 'rgba(174,187,208,.35)',
+  proximity: 'rgba(174,187,208,.35)',
+};
+const GRAPH_NEUTRAL_NODE_BG = '#263143';
+const GRAPH_NEUTRAL_NODE_BORDER = '#AEBBD0';
+
+function buildGraph(ring){
+  try {
+  const nodes = ring.nodes.map(n => ({
+    id: n.id, label: n.id.replace('ACC',''),
+    color: {background: GRAPH_NEUTRAL_NODE_BG, border: GRAPH_NEUTRAL_NODE_BORDER},
+    font: {color:'#DCE3EF', size:10, face:'IBM Plex Mono'}, size: 13, borderWidth:2.5,
+    shadow:{enabled:true, color:'rgba(174,187,208,.22)', size:7, x:0, y:0},
+  }));
+  (ring.cleared_neighbors||[]).forEach(c => {
+    nodes.push({id:c.id, label:c.id.replace('ACC',''),
+      color:{background:'#202938', border: '#66738B'},
+      font:{color:'#8795AB', size:10, face:'IBM Plex Mono'}, size:11, borderWidth:1.5, shapeProperties:{borderDashes:[3,3]}});
+  });
+
+  const edges = ring.edges.map((e,i) => ({
+    id:'e'+i, from:e.from, to:e.to,
+    color:{color: REL_COLOR[e.type] || 'rgba(128,143,166,.3)'},
+    width: e.strength==='Strong'?2.2:1.2,
+    dashes: e.strength==='Supporting',
+  }));
+  (ring.cleared_neighbors||[]).forEach((c,i) => {
+    edges.push({id:'ce'+i, from:c.connected_to, to:c.id, color:{color:'rgba(102,115,139,.22)'}, width:1, dashes:[2,3]});
+  });
+
+  visNodesDS = new vis.DataSet(nodes);
+  visEdgesDS = new vis.DataSet(edges);
+  const container = document.getElementById('graph');
+  const options = {
+    physics:{solver:'forceAtlas2Based', forceAtlas2Based:{gravitationalConstant:-55,springLength:95,springConstant:0.07,damping:0.42},
+      stabilization:{iterations:130}},
+    interaction:{hover:true, tooltipDelay:80},
+    nodes:{shape:'dot', borderWidth:3, shadow:{enabled:true, size:12, x:0, y:0}},
+    edges:{smooth:{type:'continuous'}},
+  };
+  if(network) network.destroy();
+  network = new vis.Network(container, {nodes:visNodesDS, edges:visEdgesDS}, options);
+  network.once('stabilizationIterationsDone', ()=> { if(!liveGraphGrowing) network.setOptions({physics:false}); });
+  network.on('click', (params) => {
+    if(params.nodes.length > 0) openAccountModal(params.nodes[0]);
+  });
+  } catch(err) {
+    console.error('Graph render failed:', err);
+    document.getElementById('graph').innerHTML =
+      '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-low);font-size:13px;">Network graph unavailable — visualization library failed to load.</div>';
+  }
+}
+
+/* ---------------- RING HEADER ---------------- */
+function renderRingHeader(ring){
+  const isCustom = !ring.ring_id;
+  const hasKnownRisk = !isCustom || ring.risk_label;   // custom mode starts with no known risk until investigation concludes
+  const badgeClass = hasKnownRisk ? riskBadge(ring) : null;
+  const riskBadgeHtml = hasKnownRisk
+    ? `<span class="rh-badge ${badgeClass}">${ring.risk_label} RISK</span>`
+    : `<span class="rh-badge" style="background:var(--panel-hover);color:var(--text-mid);border:1px solid var(--hairline-bright);">RISK UNKNOWN — INVESTIGATING</span>`;
+  const actionTag = (ring.action_status && ring.action_status !== 'pending')
+    ? `<span class="rh-badge" style="background:var(--panel-hover);color:var(--text-mid);border-color:var(--hairline-bright);">${ACTION_LABEL[ring.action_status]}</span>` : '';
+  const actionsHtml = isCustom
+    ? ``
+    : `<button class="btn ghost" id="exportBtn">Export</button>
+       <button class="btn ghost" id="ringIntelBtn">Ring Intelligence</button>
+       <button class="btn ghost" id="dismissBtn">Dismiss</button>
+       <button class="btn" id="watchBtn">Place on Watch</button>
+       <button class="btn primary" id="escalateBtn">Escalate Ring</button>`;
+
+  // AI-vs-analyst comparison — only shown once a decision has actually been taken
+  const decisionCompareHtml = (!isCustom && ring.analyst_decision) ? `
+    <div style="display:flex;gap:16px;padding:8px 0 2px 0;font-size:11.5px;font-family:'IBM Plex Mono',monospace;">
+      <span style="color:var(--text-low);">AI RECOMMENDED: <span style="color:var(--text-mid);font-weight:600;">${ring.ai_verdict.toUpperCase()}</span></span>
+      <span style="color:var(--text-low);">ANALYST DECIDED: <span style="color:var(--text-hi);font-weight:600;">${ring.analyst_decision.toUpperCase()}</span></span>
+      ${ring.overridden ? '<span style="color:var(--medium);font-weight:700;">OVERRIDE</span>' : '<span style="color:var(--text-mid);">AGREED</span>'}
+    </div>` : '';
+
+  document.getElementById('ring-header').innerHTML = `
+    <div class="rh-top">
+      <div>
+        <span class="rh-id display">${isCustom ? ('Custom: '+ring.internal_seeds[0]) : ring.ring_id}${riskBadgeHtml}${actionTag}</span>
+      </div>
+      <div class="rh-actions">${actionsHtml}</div>
+    </div>
+    <div class="rh-stats">
+      <div class="rh-stat"><div class="n">${ring.account_count}</div><div class="l">Accounts</div></div>
+      <div class="rh-stat"><div class="n">₹${ring.exposure_inr.toLocaleString(undefined,{maximumFractionDigits:0})}</div><div class="l">Exposure</div></div>
+      <div class="rh-stat"><div class="n">${(ring.confidence*100).toFixed(0)}%</div><div class="l">Confidence</div></div>
+    </div>
+    ${decisionCompareHtml}
+  `;
+  if(!isCustom){
+    document.getElementById('escalateBtn').onclick = () => actOnRing(ring.ring_id, 'escalate', 'escalateBtn');
+    document.getElementById('watchBtn').onclick = () => actOnRing(ring.ring_id, 'watch', 'watchBtn');
+    document.getElementById('dismissBtn').onclick = () => actOnRing(ring.ring_id, 'dismiss', 'dismissBtn');
+    document.getElementById('ringIntelBtn').onclick = () => openRingIntelligence(ring.ring_id);
+    document.getElementById('exportBtn').onclick = () => exportRingReport(ring.ring_id);
+  }
+}
+
+async function exportRingReport(ringId){
+  const btn = document.getElementById('exportBtn');
+  const original = btn.textContent;
+  btn.textContent = 'Exporting…'; btn.disabled = true;
+  try {
+    const res = await fetchJSON(`/api/rings/${ringId}/export`);
+    const data = await res.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${ringId}_audit_report.json`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch(err){ console.error('Export failed', err); }
+  btn.textContent = original; btn.disabled = false;
+}
+
+/* REAL action: POSTs to the backend, persists, and updates the UI from
+   the server's actual response — not a cosmetic timeout. */
+async function actOnRing(ringId, action, btnId){
+  const btn = document.getElementById(btnId);
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    const res = await fetchJSON(`/api/rings/${ringId}/action`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({action})
+    });
+    const data = await res.json();
+    if(!res.ok){
+      if(res.status === 401){
+        btn.textContent = 'Log in required';
+        setTimeout(() => { window.location.href = 'login.html'; }, 900);
+      } else {
+        btn.textContent = 'Failed — retry';
+        setTimeout(()=>{ btn.disabled = false; btn.textContent = original; }, 1500);
+      }
+      return;
+    }
+    const label = {escalate:'Escalated ✓', watch:'On watch ✓', dismiss:'Dismissed ✓'}[action];
+    btn.textContent = label;
+    const ringRef = ALL_RINGS.find(r => r.ring_id === ringId);
+    if(ringRef) ringRef.action_status = data.status;
+    renderQueue();
+    refreshModelHealth();   // override rate may have changed — update badge/banner immediately
+    if(currentRingId === ringId){
+      const fresh = await (await fetchJSON(`/api/rings/${ringId}`)).json();
+      renderRingHeader(fresh);
+      return;
+    }
+  } catch(err){
+    btn.textContent = 'Failed — retry';
+  }
+  setTimeout(()=>{ btn.disabled = false; }, 1200);
+}
+
+/* ---------------- TIMELINE ---------------- */
+function renderTimeline(ring){
+  const strip = document.getElementById('timeline-strip');
+  strip.innerHTML = ring.timeline.map(t => `
+    <div class="tl-item">
+      <span class="tl-time mono">${t.time}</span>
+      <span class="tl-title">${t.title}</span>
+      <span class="tl-sub">${t.subtitle}</span>
+    </div>
+  `).join('');
+}
+
+/* ---------------- AGENT STREAM (LIVE — real Server-Sent Events) ---------------- */
+let liveSource = null;
+let liveEventCount = 0;
+let liveRunning = false;
+
+const EVENT_KIND = {
+  trigger: 'start', investigate: 'progress', investigate_promoted: 'evidence',
+  investigate_not_promoted: 'cleared', relationship_found: 'evidence',
+  early_exit: 'update', final: 'final', error: 'cleared',
+  reasoner_mode: 'update', tool_call: 'progress', tool_result: 'evidence', reasoning: 'update',
+};
+
+function hideAgentPanel(){
+  document.getElementById('agent-col').style.display = 'none';
+  document.getElementById('main-grid').style.gridTemplateColumns = '280px 1fr';
+}
+function showAgentPanel(){
+  document.getElementById('agent-col').style.display = 'flex';
+  document.getElementById('main-grid').style.gridTemplateColumns = '280px 1fr 340px';
+}
+
+function idleStreamMessage(){
+  hideAgentPanel();
+  document.getElementById('agent-stream').innerHTML =
+    `<div style="padding:30px 8px;color:var(--text-low);font-size:12.5px;line-height:1.6;text-align:center;">
+      No investigation running yet.<br>Click <strong style="color:var(--text-mid);">Run Live Investigation</strong>
+      to have the agent investigate this ring's seed account in real time — every step below will be computed
+      by the backend as it happens, not replayed from a stored file.
+    </div>`;
+  document.getElementById('verdict-container').innerHTML = '';
+  document.getElementById('progress-fill').style.width = '0%';
+  document.getElementById('step-label').textContent = '';
+}
+
+function boldKeyDetails(text){
+  if(!text) return text;
+  // Bold the important, scannable facts in a log line: account IDs, claim
+  // counts, and "shared with N other account(s)" phrases.
+  return text
+    .replace(/\b(ACC\d+)\b/g, '<strong>$1</strong>')
+    .replace(/\b(\d+)\s+claim\(s\)/gi, '<strong>$1 claim(s)</strong>')
+    .replace(/\bshared with\s+(\d+)\s+other\s+account\(s\)/gi, 'shared with <strong>$1 other account(s)</strong>')
+    .replace(/\brisk score\s+(\d+%)/gi, 'risk score <strong>$1</strong>')
+    .replace(/(\d+)\s+account\(s\)/gi, '<strong>$1 account(s)</strong>');
+}
+
+function appendLiveStreamEntry(step){
+  const stream = document.getElementById('agent-stream');
+  if(liveEventCount === 0) stream.innerHTML = '';
+  const kind = EVENT_KIND[step.type] || 'progress';
+  const el = document.createElement('div');
+  el.className = 'stream-entry seen current kind-' + kind;
+  const timing = (step.compute_ms !== undefined && step.compute_ms !== null)
+    ? `<span style="color:var(--text-low);font-size:10px;"> · computed in ${step.compute_ms}ms</span>` : '';
+  el.innerHTML = `<div class="icon-dot"></div><div class="se-title">${step.title||''}</div><div class="se-sub">${boldKeyDetails(step.subtitle)||''}${timing}</div>`;
+  document.querySelectorAll('.stream-entry.current').forEach(e=>e.classList.remove('current'));
+  stream.appendChild(el);
+  el.classList.add('current');
+  el.scrollIntoView({block:'nearest', behavior:'smooth'});
+  liveEventCount++;
+  document.getElementById('agent-count').textContent = liveEventCount + ' events';
+  document.getElementById('step-label').textContent = `${liveEventCount} events (live)`;
+  document.getElementById('progress-fill').style.width = liveRunning ? '60%' : '100%';
+}
+
+function riskToColor(pct){
+  // low < 50% = yellow, medium 50-89% = orange, high >= 90% = red.
+  const p = Math.max(0, Math.min(100, Number(pct) || 0));
+  if(p >= 90) return '#FF5C67';
+  if(p >= 50) return '#FFB84D';
+  return '#FFD45A';
+}
+
+/* highlightLiveStep — FIXED. The previous version only colored a node
+   when it could parse an explicit "risk score N%" out of the subtitle,
+   and reset everything else to the SAME grey used for untouched nodes —
+   so most events (e.g. "relationship_examined" lines, which carry no
+   risk-score phrase) never visibly changed anything. Every touched node
+   now gets a real color: yellow by default the moment it's touched,
+   shifting toward orange/red as soon as an actual risk score is known. */
+function highlightLiveStep(step){
+  if(!visNodesDS || !step.account_id) return;
+  const id = step.account_id;
+
+  let color = '#FFD45A';   // default: touched, risk not yet specifically known
+  const riskMatch = (step.subtitle||'').match(/risk score\s+(\d+)%/i);
+  if(step.type === 'final'){
+    color = riskToColor((step.confidence||0)*100);
+  } else if(riskMatch){
+    color = riskToColor(parseInt(riskMatch[1], 10));
+  } else if(step.type === 'investigate_not_promoted'){
+    color = '#66738B';   // cleared / not linked — neutral grey, not risk-colored
+  }
+
+  if(!visNodesDS.get(id)){
+    visNodesDS.add({id, label: id.replace('ACC',''), color:{background:'rgba(0,0,0,.4)', border:color},
+      font:{color:'#9AA7BE', size:10, face:'IBM Plex Mono'}, size: step.type==='final'?17:14, borderWidth:2.5,
+      shadow:{enabled:true, color:color, size:14, x:0, y:0}});
+  } else {
+    visNodesDS.update({id, color:{background:'rgba(0,0,0,.4)', border:color}, size: step.type==='final'?17:14,
+      shadow:{enabled:true, color:color, size:14, x:0, y:0}});
+  }
+
+  // Edge creation: uses the REAL "parent" field the backend actually
+  // sends on relationship_found events — no fragile text-scraping needed.
+  if(step.parent && visEdgesDS){
+    const edgeId = [step.parent, id].sort().join('__');
+    if(!visEdgesDS.get(edgeId)){
+      let relColor = 'rgba(154,167,190,.35)';
+      const sub = (step.subtitle||'').toLowerCase();
+      if(sub.includes('routes')) relColor = 'rgba(255,184,77,.5)';
+      else if(sub.includes('referred')) relColor = 'rgba(94,231,255,.4)';
+      else if(sub.includes('synchronized')) relColor = 'rgba(255,92,103,.4)';
+      visEdgesDS.add({id: edgeId, from: step.parent, to: id, color:{color: relColor}, width: 1.6});
+    }
+  }
+}
+
+function showLiveVerdict(step, ring){
+  const actionBtn = ring.ring_id
+    ? `<button class="btn primary" id="verdictEscalate">Escalate Ring</button>`
+    : `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--hairline);text-align:left;">
+        <div style="font-size:11px;color:var(--text-low);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Ad-Hoc Investigation — Not Saved as a Ring</div>
+        <div style="font-size:12px;color:var(--text-mid);margin-bottom:10px;">This was a one-off lookup on an account you entered directly, not one of the saved rings in the queue — so there's no Escalate/Watch/Dismiss action here.</div>
+        <div style="font-size:11px;color:var(--text-low);margin-bottom:4px;">Accounts identified (${step.cluster_members.length})</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--text-mid);line-height:1.6;">${step.cluster_members.join(', ')}</div>
+      </div>`;
+  document.getElementById('verdict-container').innerHTML = `
+    <div class="verdict-box ${step.verdict === 'ESCALATE' && step.confidence > 0.9 ? 'high-confidence' : ''}">
+      <div class="vb-label">${step.verdict} — LIVE RESULT</div>
+      <div class="vb-conf">${(step.confidence*100).toFixed(0)}%</div>
+      <div class="vb-desc">${step.cluster_size} account(s) · ₹${step.exposure_inr.toLocaleString(undefined,{maximumFractionDigits:0})} exposure · computed just now (${step.total_compute_ms}ms total)</div>
+      ${actionBtn}
+    </div>
+  `;
+  if(ring.ring_id){
+    document.getElementById('verdictEscalate').onclick = () => actOnRing(ring.ring_id, 'escalate', 'verdictEscalate');
+  } else {
+    const statEls = document.querySelectorAll('.rh-stats .rh-stat .n');
+    if(statEls[0]) statEls[0].textContent = step.cluster_size;
+    if(statEls[1]) statEls[1].textContent = '₹' + step.exposure_inr.toLocaleString(undefined,{maximumFractionDigits:0});
+    if(statEls[2]) statEls[2].textContent = (step.confidence*100).toFixed(0) + '%';
+    const verdictBadgeClass = {ESCALATE:'high', WATCH:'medium', DISMISS:'low'}[step.verdict] || 'low';
+    const verdictBadgeLabel = {ESCALATE:'HIGH RISK', WATCH:'MEDIUM RISK', DISMISS:'LOW RISK'}[step.verdict] || 'LOW RISK';
+    const badgeEl = document.querySelector('.rh-id .rh-badge');
+    if(badgeEl){
+      badgeEl.className = 'rh-badge ' + verdictBadgeClass;
+      badgeEl.textContent = verdictBadgeLabel;
+      badgeEl.style = '';
+    }
+  }
+}
+
+function stopLiveInvestigation(){
+  if(liveSource){ liveSource.close(); liveSource = null; }
+  liveRunning = false;
+  const btn = document.getElementById('replayBtn');
+  btn.textContent = '▶ Run Live Investigation'; btn.classList.remove('playing');
+}
+
+function startLiveInvestigation(ring){
+  stopLiveInvestigation();
+  showAgentPanel();
+  if(visNodesDS){
+    ring.nodes.forEach(n => visNodesDS.update({id:n.id, color:{background:GRAPH_NEUTRAL_NODE_BG,border:GRAPH_NEUTRAL_NODE_BORDER}, size:11}));
+  }
+  liveEventCount = 0;
+  liveRunning = true;
+  document.getElementById('agent-stream').innerHTML = '';
+  document.getElementById('verdict-container').innerHTML = '';
+  document.getElementById('progress-fill').style.width = '8%';
+
+  // Seed = this ring's actual highest-risk member (the real account that
+  // originally triggered this investigation), not an arbitrary pick.
+  const seedId = (ring.internal_seeds && ring.internal_seeds[0]) ||
+                 ring.nodes.reduce((a,b) => (b.risk_score > a.risk_score ? b : a), ring.nodes[0]).id;
+
+  const btn = document.getElementById('replayBtn');
+  btn.textContent = '⏸ Investigating…'; btn.classList.add('playing');
+
+  liveSource = new EventSource(`/api/investigate/${seedId}/stream?delay=0.9`);
+  liveSource.onmessage = (msg) => {
+    const step = JSON.parse(msg.data);
+    appendLiveStreamEntry(step);
+    highlightLiveStep(step);
+    if(step.type === 'final'){
+      showLiveVerdict(step, ring);
+      stopLiveInvestigation();
+    }
+  };
+  liveSource.onerror = () => { stopLiveInvestigation(); };
+}
+
+/* ---------------- LOAD RING (live fetch) ---------------- */
+async function loadRing(ringId){
+  currentRingId = ringId;
+  liveGraphGrowing = false;
+  stopLiveInvestigation();
+  renderQueue();
+  const res = await fetchJSON(`/api/rings/${ringId}`);
+  if(!res.ok){ console.error('Failed to load ring', ringId); return; }
+  const ring = await res.json();
+
+  renderRingHeader(ring);
+  renderTimeline(ring);
+  idleStreamMessage();
+  document.getElementById('agent-count').textContent = '';
+  buildGraph(ring);
+
+  const replayBtn = document.getElementById('replayBtn');
+  replayBtn.onclick = () => {
+    if(liveRunning){ stopLiveInvestigation(); }
+    else { startLiveInvestigation(ring); }
+  };
+}
+
+/* ---------------- ACCOUNT MODAL (live fetch) ---------------- */
+async function openAccountModal(accountId){
+  const modal = document.getElementById('account-modal');
+  modal.innerHTML = `<div class="modal-body" style="text-align:center;color:var(--text-low);padding:40px;">Loading…</div>`;
+  document.getElementById('modal-overlay').classList.add('open');
+
+  const res = await fetchJSON(`/api/accounts/${accountId}`);
+  if(!res.ok){
+    modal.innerHTML = `
+      <div class="modal-head">
+        <div><div class="mid mono">${accountId}</div><h2>Cleared Account</h2></div>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="color:var(--text-mid);font-size:13px;line-height:1.6;">
+          This account was investigated because it connected to a flagged account,
+          but independent review found insufficient evidence to link it to the ring.
+          Connection alone is never treated as guilt.
+        </p>
+      </div>`;
+    return;
+  }
+  const detail = await res.json();
+  const evidenceHtml = detail.evidence.length ? detail.evidence.map(e => `
+    <div class="evidence-row">
+      <div class="ev-left">${e.icon} ${e.label}</div>
+      <div class="ev-strength ${e.strength}">${e.strength}</div>
+    </div>
+  `).join('') : '<div class="empty-cleared">No independent evidence on file.</div>';
+
+  modal.innerHTML = `
+    <div class="modal-head">
+      <div><div class="mid mono">ACCOUNT</div><h2>${detail.account_id}</h2></div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="risk-ring">
+        <div class="risk-ring-num">${(detail.risk_score*100).toFixed(0)}%</div>
+        <div><div class="risk-ring-label">Risk Score</div><div class="status-chip">${detail.status}</div></div>
+      </div>
+      <div>${evidenceHtml}</div>
+      <div class="assessment-box"><div class="al">Agent Assessment</div>"${detail.assessment}"</div>
+      <div class="modal-actions">
+        <button class="btn" onclick="closeModal()">View Ring</button>
+        <button class="btn" onclick="closeModal()">Watch</button>
+        <button class="btn primary" onclick="closeModal()">Escalate</button>
+      </div>
+    </div>
+  `;
+}
+/* ---------------- RING INTELLIGENCE (deterministic explanation layer) ---------------- */
+const RI_LOADING_STEPS = ["Building account blueprints\u2026", "Aggregating ring evidence\u2026", "Generating investigation summary\u2026"];
+
+function openRiModal(){ document.getElementById('ri-modal-overlay').style.display = 'flex'; }
+function closeRiModal(){ document.getElementById('ri-modal-overlay').style.display = 'none'; }
+document.getElementById('ri-modal-overlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'ri-modal-overlay') closeRiModal();
+});
+
+async function openRingIntelligence(ringId){
+  const modal = document.getElementById('ri-modal');
+  let stepIdx = 0;
+  modal.innerHTML = `
+    <div class="ri-head">
+      <div><div class="ri-eyebrow">Ring Intelligence</div><h2>Why was this group flagged?</h2></div>
+      <button class="modal-close" onclick="closeRiModal()">\u2715</button>
+    </div>
+    <div class="ri-loading">
+      <div class="spinner"></div>
+      <div class="step-text" id="ri-step-text">${RI_LOADING_STEPS[0]}</div>
+    </div>
+  `;
+  openRiModal();
+
+  const stepTimer = setInterval(()=>{
+    stepIdx = Math.min(stepIdx+1, RI_LOADING_STEPS.length-1);
+    const el = document.getElementById('ri-step-text');
+    if(el) el.textContent = RI_LOADING_STEPS[stepIdx];
+  }, 550);
+
+  let report;
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
+    const res = await fetchJSON(`/api/rings/${ringId}/intelligence`, {signal: controller.signal});
+    clearTimeout(timeoutId);
+    if(!res.ok) throw new Error('request failed');
+    report = await res.json();
+  } catch(err) {
+    clearInterval(stepTimer);
+    modal.innerHTML = `
+      <div class="ri-head">
+        <div><div class="ri-eyebrow">Ring Intelligence</div><h2>Unavailable</h2></div>
+        <button class="modal-close" onclick="closeRiModal()">\u2715</button>
+      </div>
+      <div class="ri-body"><p style="color:var(--text-mid);font-size:13px;">
+        Could not generate the intelligence report for this ring. The underlying investigation
+        result is unaffected — this only affects the explanation layer.</p></div>`;
+    return;
+  }
+  clearInterval(stepTimer);
+  await new Promise(r => setTimeout(r, 300));
+  renderRingIntelligence(ringId, report);
+}
+
+function renderRingIntelligence(ringId, report){
+  const modal = document.getElementById('ri-modal');
+
+  let sourceTag;
+  if(report.generated_by && (report.generated_by.startsWith('groq_llm') || report.generated_by.startsWith('ollama_llm'))){
+    const [provider, model] = report.generated_by.split(':')[0] === 'groq_llm'
+      ? ['Groq (cloud)', report.generated_by.split(':')[1]]
+      : ['Ollama (local)', report.generated_by.split(':')[1]];
+    sourceTag = `Generated by: LLM \u2014 ${model}, ${provider} \u2014 ${report.llm_latency_ms||'?'}ms \u2014 explanation only, detection result is unchanged`;
+  } else {
+    const reason = report.llm_attempted ? ` \u2014 LLM was attempted but unavailable (${report.llm_status||'unknown reason'})` : '';
+    sourceTag = `Generated by: Deterministic Evidence Synthesis (no LLM used \u2014 template-based over real pipeline output)${reason}`;
+  }
+
+  const strongestHtml = report.strongest_evidence.map(s => {
+    const n = s.match(/^\d+/);
+    return `<div class="ri-evidence-line"><span class="n">${n?n[0]:''}</span><span>${s.replace(/^\d+\s*account\(s\)\s*/,'')}</span></div>`;
+  }).join('') || '<div class="ri-evidence-line" style="color:var(--text-low);">No strong evidence found.</div>';
+
+  const supportingHtml = report.supporting_evidence.map(s => {
+    const n = s.match(/^\d+/);
+    return `<div class="ri-evidence-line"><span class="n" style="color:var(--watch);">${n?n[0]:''}</span><span>${s.replace(/^\d+\s*account\(s\)\s*/,'')}</span></div>`;
+  }).join('');
+
+  const accountCardsHtml = report.account_assessments.map(a => `
+    <div class="ri-account-card">
+      <div class="ac-id"><span>${a.account_id}</span><span class="ac-conf ${a.confidence}">${a.confidence}</span></div>
+      <div class="ac-role">${a.role_in_ring}</div>
+      <div class="ac-evidence">${a.evidence_summary}</div>
+    </div>
+  `).join('');
+
+  const weakestHtml = report.weakest_member ? `
+    <div class="ri-section">
+      <div class="ri-label">Weakest Member</div>
+      <div class="ri-weakest-box">
+        <div class="w-id">${report.weakest_member.account_id}</div>
+        ${report.weakest_member.reason}
+      </div>
+    </div>` : '';
+
+  const actionLabel = {escalate:'ESCALATE', watch:'WATCH', dismiss:'DISMISS'}[report.recommended_action] || report.recommended_action.toUpperCase();
+  const actionColor = report.recommended_action === 'escalate' ? 'var(--risk)' : 'var(--watch)';
+
+  modal.innerHTML = `
+    <div class="ri-head">
+      <div><div class="ri-eyebrow">Ring Intelligence \u2014 ${ringId}</div><h2>Why was this group flagged?</h2></div>
+      <button class="modal-close" onclick="closeRiModal()">\u2715</button>
+    </div>
+    <div class="ri-body">
+      <div class="ri-section">
+        <div class="ri-label">Primary Pattern</div>
+        <span class="ri-pattern-badge">${report.primary_pattern}</span>
+      </div>
+
+      <div class="ri-section">
+        <div class="ri-label">Strongest Evidence</div>
+        ${strongestHtml}
+      </div>
+
+      ${supportingHtml ? `<div class="ri-section"><div class="ri-label">Supporting Evidence</div>${supportingHtml}</div>` : ''}
+
+      <div class="ri-section">
+        <div class="ri-label">Account Breakdown</div>
+        <div class="ri-accounts-grid">${accountCardsHtml}</div>
+      </div>
+
+      ${weakestHtml}
+
+      <div class="ri-section">
+        <div class="ri-label">Agent Assessment</div>
+        <div class="ri-summary-text">${report.analyst_summary}</div>
+      </div>
+
+      <div class="ri-section" style="margin-bottom:0;">
+        <div class="ri-action-row">
+          <div>
+            <div class="ri-label" style="margin-bottom:4px;">Recommended Action</div>
+            <span class="ri-pattern-badge" style="background:transparent;border-color:${actionColor};color:${actionColor};">${actionLabel}</span>
+          </div>
+          <button class="btn primary" onclick="actOnRing('${ringId}','${report.recommended_action}','ringIntelBtn'); closeRiModal();">
+            Apply: ${actionLabel} Ring
+          </button>
+        </div>
+        <div class="ri-source-tag">${sourceTag}</div>
+      </div>
+    </div>
+  `;
+}
+
+
+document.getElementById('modal-overlay').addEventListener('click', (e)=>{ if(e.target.id === 'modal-overlay') closeModal(); });
+document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') closeModal(); if(e.key === 'Escape') closeRiModal(); });
+function closeModal(){ document.getElementById('modal-overlay').classList.remove('open'); }
+
+/* ---------------- INIT ---------------- */
+document.getElementById('sortSelect').addEventListener('change', (e)=>{
+  sortMode = e.target.value;
+  renderQueue();
+});
+
+/* ---------------- CUSTOM (FROM-SCRATCH) INVESTIGATION ---------------- */
+document.getElementById('customInvestigateBtn').onclick = () => {
+  const input = document.getElementById('customAccountInput');
+  const errEl = document.getElementById('customInvestigateError');
+  const accountId = input.value.trim().toUpperCase();
+  errEl.style.display = 'none';
+  if(!accountId){
+    errEl.textContent = 'Enter an account ID.'; errEl.style.display = 'block'; return;
+  }
+  startCustomInvestigation(accountId);
+};
+document.getElementById('customAccountInput').addEventListener('keydown', (e)=>{
+  if(e.key === 'Enter') document.getElementById('customInvestigateBtn').click();
+});
+
+function startCustomInvestigation(accountId){
+  currentRingId = null;
+  liveGraphGrowing = true;
+  renderQueue();
+
+  const syntheticRing = {
+    ring_id: null, internal_seeds: [accountId],
+    nodes: [{id: accountId, risk_score: 0, status: 'pending', claim_count: 0, total_claimed: 0}],
+    edges: [], cleared_neighbors: [], timeline: [], activity_stream: [],
+    account_count: 1, exposure_inr: 0, confidence: 0, risk_label: null,
+  };
+
+  renderRingHeader(syntheticRing);
+  renderTimeline(syntheticRing);
+  idleStreamMessage();
+  buildGraph(syntheticRing);
+
+  const replayBtn = document.getElementById('replayBtn');
+  replayBtn.onclick = () => {
+    if(liveRunning){ stopLiveInvestigation(); }
+    else { startLiveInvestigation(syntheticRing); }
+  };
+  startLiveInvestigation(syntheticRing);
+}
+
+
+renderNav('investigate.html');
+init();
+</script>
+</body>
+</html>

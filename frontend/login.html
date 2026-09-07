@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ring Sentinel — Log In</title>
+<link rel="stylesheet" href="static/styles.css">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="glyph">RS</div>
+    <h2 id="formTitle">Log in</h2>
+    
+
+    <div class="field-row"><label>Username</label><input id="username" autocomplete="username"></div>
+    <div class="field-row"><label>Password</label><input id="password" type="password" autocomplete="current-password"></div>
+    <button class="btn primary" id="submitBtn" style="width:100%;justify-content:center;">Log in</button>
+    <div class="login-error" id="errorMsg"></div>
+
+    <div class="login-toggle">
+      <span id="toggleText">Don't have an account? <a id="toggleLink">Register</a></span>
+    </div>
+  </div>
+</div>
+
+<script src="static/common.js"></script>
+<script>
+let mode = 'login';
+
+function updateFormMode(){
+  document.getElementById('formTitle').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('submitBtn').textContent = mode === 'login' ? 'Log in' : 'Create account';
+  document.getElementById('toggleText').innerHTML = mode === 'login'
+    ? `Don't have an account? <a id="toggleLink">Register</a>`
+    : `Already have an account? <a id="toggleLink">Log in</a>`;
+  document.getElementById('errorMsg').style.display = 'none';
+  document.getElementById('toggleLink').onclick = () => {
+    mode = mode === 'login' ? 'register' : 'login';
+    updateFormMode();
+  };
+}
+updateFormMode();
+
+document.getElementById('submitBtn').onclick = async () => {
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const errorEl = document.getElementById('errorMsg');
+  errorEl.style.display = 'none';
+  if(!username || !password){
+    errorEl.textContent = 'Enter both a username and password.';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  try {
+    if(mode === 'register'){
+      const res = await fetch('/api/auth/register', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        credentials: 'same-origin', body: JSON.stringify({username, password})
+      });
+      const data = await res.json();
+      if(!res.ok){ errorEl.textContent = data.detail || 'Registration failed.'; errorEl.style.display='block'; return; }
+    }
+    const res2 = await fetch('/api/auth/login', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      credentials: 'same-origin', body: JSON.stringify({username, password})
+    });
+    const data2 = await res2.json();
+    if(!res2.ok){ errorEl.textContent = data2.detail || 'Login failed.'; errorEl.style.display='block'; return; }
+    window.location.href = 'investigate.html';
+  } catch(err){
+    errorEl.textContent = 'Request failed: ' + err.message;
+    errorEl.style.display = 'block';
+  }
+};
+
+document.getElementById('password').addEventListener('keydown', (e) => {
+  if(e.key === 'Enter') document.getElementById('submitBtn').click();
+});
+</script>
+</body>
+</html>

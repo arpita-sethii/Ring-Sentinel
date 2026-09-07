@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ring Sentinel — Model Health</title>
+<link rel="stylesheet" href="static/styles.css">
+</head>
+<body class="app-active">
+<nav id="app-nav"></nav>
+<div id="page-model-health" class="dash-page">
+  <div class="subpage-wrap">
+    <div class="subpage-header">
+      <div class="eyebrow"><span class="dot"></span>System Monitoring</div>
+      <h2>Model Health</h2>
+      <p>Live evaluation metrics, data drift, and the four independent retrain triggers — computed fresh on every load, not cached.</p>
+    </div>
+    <div class="card-block">
+      <h3>Latest Full Evaluation (v9, 5-relation model)</h3>
+      <div class="metric-grid">
+        <div class="metric-tile"><div class="n">99.1%</div><div class="l">Precision</div></div>
+        <div class="metric-tile"><div class="n">91.3%</div><div class="l">Recall</div></div>
+        <div class="metric-tile"><div class="n">99.3%</div><div class="l">Ring Recall</div></div>
+      </div>
+    </div>
+    <div class="card-block">
+      <h3>Data Drift</h3>
+      <div id="driftDetail">Loading…</div>
+    </div>
+    <div class="card-block">
+      <h3>Retrain Triggers</h3>
+      <div id="triggerDetail">Loading…</div>
+      <button class="btn primary" id="modelHealthRetrainBtn" style="margin-top:14px;display:none;">Retrain Model</button>
+      <div id="modelHealthRetrainStatus" style="margin-top:8px;font-size:12px;color:var(--text-low);"></div>
+    </div>
+  </div>
+</div>
+
+<script src="static/common.js"></script>
+<script>
+renderNav('model-health.html');
+
+async function loadModelHealthPage(){
+  try {
+    const [driftRes, feedbackRes] = await Promise.all([fetchJSON('/api/drift'), fetchJSON('/api/feedback-stats')]);
+    const drift = await driftRes.json();
+    const feedback = await feedbackRes.json();
+
+    const rsd = drift.risk_score_drift, emd = drift.evidence_mix_drift;
+    document.getElementById('driftDetail').innerHTML = `
+      <div class="trigger-row"><span>Overall Severity</span><span class="trigger-status ${drift.overall_severity==='severe'?'firing':'ok'}">${drift.overall_severity.toUpperCase()}</span></div>
+      <div class="trigger-row"><span>Risk-score PSI</span><span>${rsd.psi} (${rsd.severity})</span></div>
+      <div class="trigger-row"><span>Evidence-mix PSI</span><span>${emd.psi} (${emd.severity})</span></div>
+      <div class="trigger-row"><span>Wasserstein Distance</span><span>${rsd.wasserstein_distance}</span></div>
+      <div class="trigger-row"><span>KS Statistic</span><span>${rsd.ks_statistic} (p=${rsd.ks_pvalue})</span></div>
+    `;
+
+    const TRIGGER_LABEL = {override_rate:'Analyst override rate', performance_degradation:'Escalate-verdict agreement',
+                            data_drift_psi:'Data drift (PSI)', scheduled_interval:'Scheduled interval'};
+    document.getElementById('triggerDetail').innerHTML = Object.entries(feedback.triggers).map(([key, t]) => `
+      <div class="trigger-row">
+        <span>${TRIGGER_LABEL[key]}</span>
+        <span class="trigger-status ${t.firing?'firing':'ok'}">${t.firing?'FIRING':'OK'} — ${t.detail}</span>
+      </div>
+    `).join('');
+
+    const retrainBtn = document.getElementById('modelHealthRetrainBtn');
+    retrainBtn.style.display = feedback.retrain_recommended ? 'inline-flex' : 'none';
+    retrainBtn.onclick = async () => {
+      retrainBtn.disabled = true; retrainBtn.textContent = 'Retraining…';
+      const status = document.getElementById('modelHealthRetrainStatus');
+      status.textContent = 'Refitting on analyst corrections…';
+      try {
+        const res = await fetchJSON('/api/retrain', {method:'POST'});
+        const result = await res.json();
+        if(!res.ok) throw new Error(result.detail || 'retrain failed');
+        status.textContent = `\u2713 Done in ${result.elapsed_seconds}s — ${result.accounts_label_corrected} accounts corrected, ${result.accounts_flipped_verdict} verdicts shifted. Session-only.`;
+        await loadModelHealthPage();
+      } catch(err){
+        status.textContent = 'Retrain failed: ' + err.message;
+      }
+      retrainBtn.disabled = false; retrainBtn.textContent = 'Retrain Model';
+    };
+  } catch(err){
+    document.getElementById('driftDetail').innerHTML = `<span style="color:var(--risk);">Failed to load: ${err.message}</span>`;
+  }
+}
+loadModelHealthPage();
+</script>
+</body>
+</html>

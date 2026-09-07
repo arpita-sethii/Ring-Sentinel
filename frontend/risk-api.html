@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ring Sentinel — Risk API</title>
+<link rel="stylesheet" href="static/styles.css">
+</head>
+<body class="app-active">
+<nav id="app-nav"></nav>
+<div id="page-risk-api" class="dash-page">
+  <div class="subpage-wrap">
+    <div class="subpage-header">
+      <div class="eyebrow"><span class="dot"></span>Product Surface</div>
+      <h2>Real-Time Risk API</h2>
+      <p>The same trained model and the same thresholds used everywhere else in this system (0.55 / 0.28), exposed as a single call a merchant's checkout or risk pipeline would make. Try it against any account in the current dataset.</p>
+    </div>
+    <div class="card-block">
+      <h3>Try It</h3>
+      <div class="field-row"><label>Account ID</label><input id="riskApiAccountId" placeholder="e.g. ACC018394"></div>
+      <div class="field-row"><label>Transaction ID (optional)</label><input id="riskApiTxnId" placeholder="e.g. TX88421"></div>
+      <div class="field-row"><label>Amount (optional)</label><input id="riskApiAmount" placeholder="e.g. 4999" type="number"></div>
+      <button class="btn primary" id="riskApiSubmit" style="margin-top:6px;">Evaluate Risk</button>
+    </div>
+    <div id="riskApiResult"></div>
+    <div class="card-block">
+      <h3>Endpoint</h3>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--text-mid);line-height:1.9;
+          background:var(--panel);border:1px solid var(--hairline);border-radius:8px;padding:16px 18px;">
+        <span style="color:var(--page-accent);font-weight:700;">POST</span> /api/risk/evaluate<br>
+        <span style="color:var(--text-low);">{"account_id": "ACC018500", "transaction_id": "TX001", "amount": 4999}</span><br><br>
+        <span style="color:var(--low);">&#8594;</span> { risk_score, decision, risk_level, reasons[], ring_id, device_sharing, thresholds_used }
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="static/common.js"></script>
+<script>
+renderNav('risk-api.html');
+
+document.getElementById('riskApiSubmit').onclick = async () => {
+  const accountId = document.getElementById('riskApiAccountId').value.trim().toUpperCase();
+  const txnId = document.getElementById('riskApiTxnId').value.trim();
+  const amount = document.getElementById('riskApiAmount').value;
+  const resultEl = document.getElementById('riskApiResult');
+  if(!accountId){ resultEl.innerHTML = '<div class="card-block" style="color:var(--risk);">Enter an account ID.</div>'; return; }
+
+  const btn = document.getElementById('riskApiSubmit');
+  btn.disabled = true; btn.textContent = 'Evaluating…';
+
+  const body = {account_id: accountId};
+  if(txnId) body.transaction_id = txnId;
+  if(amount) body.amount = Number(amount);
+
+  try {
+    const res = await fetchJSON('/api/risk/evaluate', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if(!res.ok){
+      resultEl.innerHTML = `<div class="card-block" style="color:var(--risk);">${data.detail || 'Evaluation failed'}</div>`;
+    } else {
+      const reasonsHtml = data.reasons.map(r => `<div class="reason-line">${r}</div>`).join('');
+      resultEl.innerHTML = `
+        <div class="card-block">
+          <h3>Result</h3>
+          <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px;">
+            <span class="decision-badge ${data.decision}">${data.decision}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:700;">${(data.risk_score*100).toFixed(1)}%</span>
+            <span style="color:var(--text-low);font-size:12px;">${data.risk_level} RISK</span>
+          </div>
+          ${data.ring_id ? `<div style="color:var(--risk);font-size:12.5px;margin-bottom:10px;">Known member of investigated ring ${data.ring_id}</div>` : ''}
+          <div>${reasonsHtml}</div>
+        </div>`;
+    }
+  } catch(err){
+    resultEl.innerHTML = `<div class="card-block" style="color:var(--risk);">Request failed: ${err.message}</div>`;
+  }
+  btn.disabled = false; btn.textContent = 'Evaluate Risk';
+};
+</script>
+</body>
+</html>

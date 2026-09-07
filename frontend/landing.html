@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ring Sentinel — Coordinated Abuse Intelligence</title>
+<link rel="stylesheet" href="static/styles.css">
+</head>
+<body>
+<div id="landing">
+  <div id="ambient-bleed"></div>
+  <div class="lg-left">
+    <div class="lg-glyph">RS</div>
+    <div class="lg-title">RING <span>SENTINEL</span></div>
+    <div class="lg-tagline">Coordinated abuse intelligence — autonomous investigation, live. Real-time detection across every account in the network.</div>
+    <div class="lg-status-line"><span class="lg-status-dot"></span> LIVE — <span id="lg-status-count">…</span> ACTIVE INVESTIGATIONS</div>
+
+    <div class="lg-metrics" id="lg-metrics">
+      <div class="lg-metric"><div class="n" id="lgm-accounts">—</div><div class="l">Accounts Monitored</div></div>
+      <div class="lg-metric"><div class="n" id="lgm-rings">—</div><div class="l">Rings Detected</div></div>
+      <div class="lg-metric"><div class="n" id="lgm-active">—</div><div class="l">Active Investigations</div></div>
+      <div class="lg-metric"><div class="n" id="lgm-exposure">—</div><div class="l">Exposure Identified</div></div>
+    </div>
+    <a class="lg-enter" href="login.html">Enter Dashboard →</a>
+    <div class="lg-sub">GraphSAGE + XGBoost detection · adaptive live investigation agent</div>
+  </div>
+
+  <div class="lg-right">
+    <div class="radar-scan-grid"></div>
+    <div id="radar-wrap">
+      <div class="radar-cross"></div>
+      <div class="radar-cross vert"></div>
+      <div class="radar-ring rr1"></div>
+      <div class="radar-ring rr2"></div>
+      <div class="radar-ring rr3"></div>
+      <div class="radar-ring rr4"></div>
+      <div class="radar-ring rr5"></div>
+      <div id="radar-sweep"></div>
+      <div class="radar-center-glow"></div>
+      <div class="radar-blip" style="top:32%;left:58%;"></div>
+      <div class="radar-blip amber" style="top:62%;left:38%;animation-delay:.7s;"></div>
+      <div class="radar-blip" style="top:44%;left:22%;animation-delay:1.3s;"></div>
+      <div class="radar-blip amber" style="top:70%;left:64%;animation-delay:.4s;"></div>
+      <div class="radar-blip" style="top:20%;left:44%;animation-delay:1.8s;"></div>
+    </div>
+  </div>
+</div>
+
+<script src="static/common.js"></script>
+<script>
+function countUp(el, target, formatter, duration=1200){
+  const start = performance.now();
+  function tick(now){
+    const p = Math.min((now-start)/duration, 1);
+    const eased = 1 - Math.pow(1-p, 3);
+    el.textContent = formatter(target*eased);
+    if(p < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+(async function initLanding(){
+  try {
+    const res = await fetchJSON('/api/stats');
+    const stats = await res.json();
+    countUp(document.getElementById('lgm-accounts'), stats.total_accounts, v => Math.round(v).toLocaleString());
+    countUp(document.getElementById('lgm-rings'), stats.total_rings, v => Math.round(v).toLocaleString());
+    countUp(document.getElementById('lgm-active'), stats.active_investigations, v => Math.round(v).toLocaleString());
+    countUp(document.getElementById('lgm-exposure'), stats.total_exposure_inr, v => '\u20b9'+Math.round(v).toLocaleString());
+    const statusCount = document.getElementById('lg-status-count');
+    if(statusCount) statusCount.textContent = stats.active_investigations.toLocaleString();
+  } catch(err){ console.error('Landing stats fetch failed', err); }
+})();
+</script>
+</body>
+</html>
