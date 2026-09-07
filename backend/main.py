@@ -17,7 +17,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -27,6 +27,7 @@ import agent_live
 import ring_intelligence
 import drift_monitor
 import retrain
+import auth
 import numpy as np
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -56,6 +57,63 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------
+# AUTH — in-memory, session-cookie based. Read/browse endpoints stay
+# open without login; only WRITE actions (ring actions, retrain) require
+# one, so they can be attributed to a real person.
+# ---------------------------------------------------------------------
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def require_user(request: Request) -> str:
+    token = request.cookies.get("session_token")
+    username = auth.get_user_from_token(token)
+    if not username:
+        raise HTTPException(status_code=401, detail="Login required for this action.")
+    return username
+
+
+@app.post("/api/auth/register")
+def register(body: RegisterRequest):
+    try:
+        result = auth.register_user(body.username, body.password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
+
+
+@app.post("/api/auth/login")
+def login(body: LoginRequest, response: Response):
+    if not auth.verify_login(body.username, body.password):
+        raise HTTPException(status_code=401, detail="Incorrect username or password.")
+    token = auth.create_session(body.username)
+    response.set_cookie("session_token", token, httponly=True, samesite="lax", max_age=60*60*24*7)
+    return {"username": body.username}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response):
+    auth.destroy_session(request.cookies.get("session_token"))
+    response.delete_cookie("session_token")
+    return {"status": "logged_out"}
+
+
+@app.get("/api/auth/me")
+def me(request: Request):
+    username = auth.get_user_from_token(request.cookies.get("session_token"))
+    if not username:
+        raise HTTPException(status_code=401, detail="Not logged in.")
+    return {"username": username}
 
 
 def ring_with_status(ring_id: str, ring_obj: dict) -> dict:
@@ -202,7 +260,7 @@ def _evaluate_retrain_triggers():
 
 
 @app.post("/api/rings/{ring_id}/action")
-def act_on_ring(ring_id: str, body: RingActionRequest):
+def act_on_ring(ring_id: str, body: RingActionRequest, analyst: str = Depends(require_user)):
     if ring_id not in RINGS:
         raise HTTPException(status_code=404, detail=f"Ring {ring_id} not found")
     ring_obj = RINGS[ring_id]
@@ -218,6 +276,7 @@ def act_on_ring(ring_id: str, body: RingActionRequest):
         "ai_confidence": ring_obj["confidence"],
         "analyst_decision": body.action,
         "overridden": overridden,
+        "analyst_username": analyst,
     }
 
     FEEDBACK_STATS["total_decisions"] += 1
@@ -249,7 +308,7 @@ def get_feedback_stats():
 
 
 @app.post("/api/retrain")
-def run_retrain():
+def run_retrain(analyst: str = Depends(require_user)):
     """REAL retrain — not a stub. Refits the XGBoost layer (on top of the
     already-trained, unchanged GraphSAGE embeddings) using every recorded
     analyst override as a label correction, persists the new model +
@@ -478,6 +537,7 @@ def get_audit_log():
             "overridden": action.get("overridden", False),
             "status": action.get("status"),
             "updated_at": action.get("updated_at"),
+            "analyst_username": action.get("analyst_username", "unknown"),
         })
     entries.sort(key=lambda e: e["updated_at"] or "", reverse=True)
     overridden_count = sum(1 for e in entries if e["overridden"])
@@ -540,4 +600,14 @@ async def investigate_stream(account_id: str, delay: float = Query(0.9, ge=0.0, 
 
 
 # Serve the frontend (index.html at root, static assets under /static)
+# "/" needs an explicit route — StaticFiles' html=True default only
+# auto-serves index.html for a root request, and this project's entry
+# point is landing.html instead.
+from fastapi.responses import FileResponse
+
+@app.get("/", include_in_schema=False)
+def root_page():
+    return FileResponse(os.path.join(FRONTEND_DIR, "landing.html"))
+
+
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
